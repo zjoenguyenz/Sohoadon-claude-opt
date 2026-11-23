@@ -45,6 +45,7 @@ enum HarnessUnitTests {
         runOfficialRuleTests(check)
         runRetentionPolicyTests(check)
         runRestorePlannerTests(check)
+        runExportKitTests(check)
         return lines
     }
 
@@ -1658,5 +1659,177 @@ enum HarnessUnitTests {
         check("RS12-tong-theo-nam",
               tally == [RestoreYearLine(year: 2025, count: 2, totalCents: 100),
                         RestoreYearLine(year: 2026, count: 2, totalCents: 251)])
+    }
+
+    // MARK: - A2 + A3: lõi xuất (ZIP / CSV / mục lục / phép tính Báo Cáo)
+    private static func runExportKitTests(_ check: (String, Bool) -> Void) {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("glk-ex-\(UUID().uuidString)")
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        check("EX01-crc32-chuan", CRC32.checksum(Data("123456789".utf8)) == 0xCBF4_3926)
+        check("EX02-dollars-phep-nguyen",
+              ExportCSV.dollars(23411) == "234.11" && ExportCSV.dollars(5) == "0.05"
+              && ExportCSV.dollars(-50) == "-0.50" && ExportCSV.dollars(0) == "0.00"
+              && ExportCSV.dollars(nil) == ""
+              && [0, 5, 100, 23411, -50, 999_999_99].allSatisfy {
+                  ExportCSV.cents(fromDollars: ExportCSV.dollars($0)) == $0 })
+        let tricky = ["a,b", "say \"hi\"", "line1\nline2", "Cà phê đ"]
+        let doc = ExportCSV.document(header: ["x", "y"], rows: [tricky, ["1", ""]])
+        check("EX03-csv-khu-hoi", ExportCSV.parse(doc) == [["x", "y"], tricky, ["1", ""]])
+
+        // ZIP khứ hồi: nhị phân ngẫu nhiên, file rỗng, tên UTF-8, file ~3 MB.
+        var seed: UInt64 = 42
+        func rnd(_ n: Int) -> Data {
+            Data((0..<n).map { _ -> UInt8 in
+                seed = seed &* 6364136223846793005 &+ 1442695040888963407
+                return UInt8(truncatingIfNeeded: seed >> 56) })
+        }
+        let blobs: [(String, Data)] = [("goc/a.jpg", rnd(4321)), ("goc/rong.pdf", Data()),
+                                       ("goc/Cà-phê_đá.jpg", rnd(17)), ("goc/lon.jpg", rnd(3_000_000))]
+        let zurl = dir.appendingPathComponent("t.zip")
+        var zipOK = false
+        do {
+            let w = try ZipWriter(url: zurl, date: Date(timeIntervalSince1970: 1_700_000_000))
+            for (n, d) in blobs { try w.add(name: n, data: d) }
+            try w.finish()
+            zipOK = true
+        } catch {
+            zipOK = false
+        }
+        let back = (try? Data(contentsOf: zurl)).flatMap { try? ZipReader.entries(of: $0) }
+        check("EX04-zip-khu-hoi-dung-byte",
+              zipOK && back == blobs.map { ZipReader.Entry(name: $0.0, data: $0.1) })
+        // Đối chứng ĐỘC LẬP bằng /usr/bin/unzip của macOS.
+        func unzip(_ args: [String]) -> (Int32, Data) {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+            p.arguments = args
+            let pipe = Pipe()
+            p.standardOutput = pipe
+            p.standardError = Pipe()
+            do { try p.run() } catch { return (-1, Data()) }
+            let out = pipe.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            return (p.terminationStatus, out)
+        }
+        let (tStatus, _) = unzip(["-tq", zurl.path])
+        let (pStatus, pData) = unzip(["-p", zurl.path, "goc/lon.jpg"])
+        check("EX05-usr-bin-unzip-test-va-giai-nen-dung-byte",
+              tStatus == 0 && pStatus == 0 && pData == blobs[3].1)
+        if let w = try? ZipWriter(url: dir.appendingPathComponent("d.zip")) {
+            try? w.add(name: "x", data: Data([1]))
+            var dupRefused = false
+            do { try w.add(name: "x", data: Data([2])) } catch { dupRefused = true }
+            var badRefused = false
+            do { try w.add(name: "../x", data: Data([2])) } catch { badRefused = true }
+            check("EX06-tu-choi-ten-trung-va-ten-thoat-thu-muc", dupRefused && badRefused)
+        }
+
+        // Mục lục kế toán: tờ thiếu file được ĐẾM + ĐỌC TÊN.
+        func input(_ id: String, kind: String = "business", official: Bool = true,
+                   paid: Int = 1000, line: String? = nil, files: [ExportFileRef],
+                   year: Int = 2026, est: Set<String> = [], known: Bool = true) -> ExportReceiptInput {
+            ExportReceiptInput(id: id, date: Date(timeIntervalSince1970: 1_767_225_600 + Double(id.count) * 86_400),
+                               reportYear: year, vendor: "Tiệm \(id)", kindRaw: kind, kindNormalized: kind,
+                               isOfficial: official, isPending: !official, isNeedsReview: !official,
+                               category: "Mục", scheduleCLine: line, subtotalCents: nil, taxCents: nil,
+                               totalCents: paid, countedCents: paid, tipCents: nil, cardLast4: "2586",
+                               businessPurpose: "", estimatedFields: est, provenanceKnown: known,
+                               originals: files)
+        }
+        let a = input("AAAA1111", files: [ExportFileRef(localName: "x.jpg", data: Data([1, 2, 3]))])
+        let b = input("BBBB2222", files: [ExportFileRef(localName: "y.jpg", data: nil)])
+        let c = input("CCCC3333", files: [])
+        let murl = dir.appendingPathComponent("m.zip")
+        var summary: AccountantExport.Summary? = nil
+        if let w = try? ZipWriter(url: murl) {
+            summary = try? AccountantExport.write([a, b, c], into: w)
+            try? w.finish()
+        }
+        let mEntries = (try? Data(contentsOf: murl)).flatMap { try? ZipReader.entries(of: $0) } ?? []
+        let index = mEntries.first { $0.name == AccountantExport.indexName }
+            .map { ExportCSV.parse($0.data) } ?? []
+        let missingRows = index.filter { $0.last?.hasPrefix("THIEU") == true }
+        check("EX07-muc-luc-dem-va-goi-ten-file-thieu",
+              summary?.filesIncluded == 1 && summary?.filesMissing == 2
+              && summary?.receiptsWithMissing == ["BBBB2222", "CCCC3333"]
+              && missingRows.count == 2
+              && missingRows.contains { $0[1] == "BBBB2222" && $0[11] == "y.jpg" }
+              && missingRows.contains { $0[1] == "CCCC3333" }
+              && index.last?.first == "TONG"
+              && mEntries.contains { $0.data == Data([1, 2, 3]) })
+
+        // TaxReportMath == thuật toán cũ của ReportsView (tham chiếu chép lại).
+        var rows: [ExportReceiptInput] = []
+        var s2: UInt64 = 7
+        func r2() -> Int { s2 = s2 &* 6364136223846793005 &+ 1442695040888963407; return Int(s2 >> 40) }
+        let kinds = ["personal", "business", "unknown"]
+        let cats = ["", "Ăn uống", "Vật Tư (Supplies)", "Xăng"]
+        for i in 0..<300 {
+            let reviewed = r2() % 2 == 0, excluded = r2() % 6 == 0
+            var x = input("R\(i)", kind: kinds[r2() % 3], official: reviewed && !excluded,
+                          paid: r2() % 40_000 - 500, files: [])
+            x.isPending = !reviewed && !excluded
+            x.isNeedsReview = !reviewed
+            x.category = cats[r2() % 4]
+            rows.append(x)
+        }
+        let t = TaxReportMath.totals(rows)
+        let refP = rows.filter { $0.kindNormalized == "personal" && $0.isOfficial }.reduce(0) { $0 + $1.countedCents }
+        let refB = rows.filter { $0.kindNormalized == "business" && $0.isOfficial }.reduce(0) { $0 + $1.countedCents }
+        let refU = rows.filter { $0.kindNormalized == "unknown" && $0.isOfficial }.reduce(0) { $0 + $1.countedCents }
+        let refPend = rows.filter { $0.isPending }.reduce(0) { $0 + $1.countedCents }
+        var refGroups: [String: (String, Int, Int)] = [:]
+        for r in rows where r.kindNormalized != "unknown" && r.isOfficial {
+            let key = "\(r.kindRaw)|\(r.category.isEmpty ? "Khác" : r.category)"
+            let o = refGroups[key] ?? (r.kindNormalized, 0, 0)
+            refGroups[key] = (r.kindNormalized, o.1 + r.countedCents, o.2 + 1)
+        }
+        let cr = TaxReportMath.categoryRows(rows)
+        check("EX08-taxreportmath-bang-thuat-toan-cu",
+              t.personal == refP && t.business == refB && t.unknown == refU && t.pending == refPend
+              && t.count == 300 && t.needsReviewCount == rows.filter { $0.isNeedsReview }.count
+              && cr.count == refGroups.count
+              && cr.allSatisfy { row in
+                  guard let g = refGroups[row.key] else { return false }
+                  return g.1 == row.total && g.2 == row.count }
+              && zip(cr, cr.dropFirst()).allSatisfy { x, y in
+                  x.kindNormalized == y.kindNormalized ? x.total >= y.total
+                      : (x.kindNormalized == "business") })
+
+        // Tax Pack CSV: chỉ tờ chính thức, cộng lại khớp tổng; Schedule C
+        // không bịa; nhãn ƯỚC TÍNH giữ nguyên.
+        let (csv, official) = TaxPackCSV.document(rows)
+        check("EX09-taxpack-csv-khop-tong-den-cent",
+              TaxPackCSV.verify(csv, against: t)
+              && official.allSatisfy { $0.isOfficial }
+              && official.count == rows.filter { $0.isOfficial }.count)
+        var off = t; off.business += 1
+        check("EX10-lech-1-cent-thi-tu-choi", !TaxPackCSV.verify(csv, against: off))
+        let withLine = input("L1", line: "Line 22 — Supplies", files: [])
+        let noLine = input("L2", files: [], est: ["tax"])
+        let unknownSrc = input("L3", files: [], known: false)
+        let (csv2, _) = TaxPackCSV.document([withLine, noLine, unknownSrc])
+        let parsed = ExportCSV.parse(csv2)
+        let sc = parsed.first!.firstIndex(of: "schedule_c")!
+        let srcTax = parsed.first!.firstIndex(of: "nguon_thue")!
+        let byID = Dictionary(uniqueKeysWithValues: parsed.dropFirst().map { ($0[1], $0) })
+        let summ = TaxPackCSV.scheduleCSummary([withLine, noLine])
+        check("EX11-khong-bia-dong-schedule-c",
+              byID["L1"]?[sc] == "Line 22 — Supplies" && byID["L2"]?[sc] == ""
+              && summ.lines.count == 1 && summ.unassignedCount == 1)
+        check("EX12-nhan-uoc-tinh-va-khong-ro-nguon",
+              byID["L2"]?[srcTax] == EstimateRule.label
+              && byID["L1"]?[srcTax] == "doc/nhap"
+              && byID["L3"]?[srcTax] == "khong_ro_nguon")
+        check("EX13-luat-uoc-tinh-than-trong",
+              EstimateRule.estimatedFields(landingFlag: true, rawSubtotalMissing: true,
+                                           rawTaxMissing: true, rawTotalMissing: false,
+                                           userEntered: ["subtotal"]) == ["tax"]
+              && EstimateRule.estimatedFields(landingFlag: false, rawSubtotalMissing: true,
+                                              rawTaxMissing: true, rawTotalMissing: true,
+                                              userEntered: []).isEmpty)
     }
 }

@@ -59,6 +59,10 @@ targets:
       # cũng biên dịch) + engine/màn hình (chỉ target app).
       - RestorePlanner.swift
       - DriveRestore.swift
+      # A2 + A3 (vòng 2): lõi xuất thuần (ZIP/CSV/phép tính Báo
+      # Cáo — harness cũng biên dịch) + màn xuất/PDF (chỉ app).
+      - ExportKit.swift
+      - ExportViews.swift
       # L-2026-11-20-42: bảo vệ ảnh gốc — kho an toàn ở
       # Application Support/OriginalVault + kiểm kê mỗi lần
       # mở app (planner thuần vào harness như ReceiptLogic;
