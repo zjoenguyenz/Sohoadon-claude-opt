@@ -1838,6 +1838,8 @@ struct ReviewView: View {
     @State private var landingAppliedCategory: TaxCategory? = nil
     /// A10: gợi ý theo tiệm (chỉ hiển thị), nạp một lần khi mở màn.
     @State private var storeSuggestions: [String] = []
+    /// A11(iii): đích "cờ kế tiếp" vừa nhảy tới.
+    @State private var lastJumpTarget: String? = nil
     @State private var showDuplicateAlert = false
     @State private var duplicateCount = 0
     /// N2-FIX: kiểm tra trùng THẤT BẠI (fetch lỗi) — khác hẳn
@@ -2011,8 +2013,29 @@ struct ReviewView: View {
         return totalText.isEmpty ? "—" : totalText
     }
 
+    /// A11(iii): trường tin cậy thấp (vendor/date/total) theo bộ đọc.
+    private var lowConfidenceFields: [String] {
+        ReviewConfidence.lowFields(vendor: draft.result.vendorConfidence,
+                                   date: draft.result.dateConfidence,
+                                   total: draft.result.totalConfidence)
+    }
+
+    /// A11(iii): đích của nút "Cờ kế tiếp" — khối cảnh báo trước,
+    /// rồi các trường tin cậy thấp theo thứ tự trên màn.
+    private var flagJumpTargets: [String] {
+        (visibleWarnings.isEmpty ? [] : ["flags"]) + lowConfidenceFields
+    }
+
+    /// A11(iii): chú thích dưới trường tin cậy thấp (chữ DESIGN-AUDIT §4.7).
+    private func lowConfidenceCaption(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(DS.warning)
+    }
+
     var body: some View {
         NavigationStack {
+          ScrollViewReader { proxy in
             List {
                 Section {
                     ledgerBanner
@@ -2069,6 +2092,7 @@ struct ReviewView: View {
                                 .foregroundStyle(.orange)
                         }
                     }
+                    .id("rv-flags")
                 }
 
                 // V3 (Pha 4, §7): pill hiện diện trường — mức dữ
@@ -2117,8 +2141,27 @@ struct ReviewView: View {
                 }
 
                 Section("Thông tin đọc được") {
-                    TextField("Tiệm / Vendor", text: $vendorText)
-                    DatePicker("Ngày", selection: $dateValue, displayedComponents: [.date, .hourAndMinute])
+                    // A11(iii): trường tin cậy thấp -> tô nền cảnh báo
+                    // (cùng kiểu listRowBackground của banner sổ) + chú
+                    // thích; không đổi giá trị nào.
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField("Tiệm / Vendor", text: $vendorText)
+                        if lowConfidenceFields.contains("vendor") {
+                            lowConfidenceCaption("Tên tiệm chưa chắc — anh nhìn ảnh gốc giúp")
+                        }
+                    }
+                    .id("rv-vendor")
+                    .listRowBackground(lowConfidenceFields.contains("vendor")
+                                       ? DS.warning.opacity(0.10) : nil)
+                    VStack(alignment: .leading, spacing: 4) {
+                        DatePicker("Ngày", selection: $dateValue, displayedComponents: [.date, .hourAndMinute])
+                        if lowConfidenceFields.contains("date") {
+                            lowConfidenceCaption("Ngày chưa chắc — anh kiểm tra giúp")
+                        }
+                    }
+                    .id("rv-date")
+                    .listRowBackground(lowConfidenceFields.contains("date")
+                                       ? DS.warning.opacity(0.10) : nil)
                     if dateWasMissing {
                         // C8-FIX: nói thẳng ngày đang hiện là
                         // ngày TẠM — bản cũ im lặng lưu ngày hôm
@@ -2153,6 +2196,9 @@ struct ReviewView: View {
                     }
                     .font(.body.weight(.semibold))
                     .foregroundStyle(DS.brand)
+                    .id("rv-total")
+                    .listRowBackground(lowConfidenceFields.contains("total")
+                                       ? DS.warning.opacity(0.10) : nil)
                     // P2-0/C-9: ô TIP chỉ hiện với tờ nhà
                     // hàng (giấy có TIP / GRATUITY / SUGGESTED
                     // TIP) — trước gói này app không có đường
@@ -2167,10 +2213,10 @@ struct ReviewView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    if draft.result.totalConfidence > 0 {
-                        Text("Độ tin cậy của tổng tiền: \(Int(draft.result.totalConfidence * 100))%")
-                            .font(.caption)
-                            .foregroundStyle(draft.result.totalConfidence < 0.85 ? .orange : .secondary)
+                    // A11(iii) (DESIGN-AUDIT §4.7): không in % tin cậy
+                    // thô nữa — tổng tin cậy thấp có chú thích riêng.
+                    if lowConfidenceFields.contains("total") {
+                        lowConfidenceCaption("Tổng tiền chưa chắc — anh kiểm tra giúp")
                     }
                     // PHA 2 (L-47): khối hạ cánh bằng thuế — nói rõ
                     // số nào là ước tính, phép suy đã dùng, và cho
@@ -2345,6 +2391,25 @@ struct ReviewView: View {
             .dsListBackground()
             .navigationTitle("Kiểm Lại Hoá Đơn")
             .navigationBarTitleDisplayMode(.inline)
+            // A11(iii): nút nhảy tới cờ kế tiếp (khối cảnh báo, rồi
+            // các trường tin cậy thấp) — chỉ cuộn, không đổi dữ liệu.
+            .toolbar {
+                if !flagJumpTargets.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            if let next = ReviewConfidence.nextTarget(
+                                targets: flagJumpTargets, after: lastJumpTarget) {
+                                lastJumpTarget = next
+                                withAnimation { proxy.scrollTo("rv-\(next)", anchor: .center) }
+                            }
+                        } label: {
+                            Label("Cờ kế tiếp (\(flagJumpTargets.count))",
+                                  systemImage: "flag.fill")
+                        }
+                        .accessibilityLabel("Tới cờ kế tiếp, \(flagJumpTargets.count) chỗ cần xem")
+                    }
+                }
+            }
             .onAppear {
                 applySuggestionOnce()
                 // A10: đọc hồ sơ tiệm một lần (file nhỏ, trên máy).
@@ -2390,6 +2455,7 @@ struct ReviewView: View {
             } message: {
                 Text("Hoá đơn CHƯA được lưu vào máy. Anh kiểm tra dung lượng trống rồi bấm Lưu lại — đừng rời màn này kẻo mất bản nháp.")
             }
+          } // A11(iii): ScrollViewReader
         }
     }
 

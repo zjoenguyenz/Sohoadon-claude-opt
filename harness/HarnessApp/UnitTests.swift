@@ -50,6 +50,7 @@ enum HarnessUnitTests {
         runStoreTraitsTests(check)
         runAuditTrailTests(check)
         runReadinessTests(check)
+        runReviewConfidenceTests(check)
         return lines
     }
 
@@ -1991,5 +1992,21 @@ enum HarnessUnitTests {
               TaxReportMath.readinessGapCount(rows) == 2)
         check("RD02-du-sach-thi-0",
               TaxReportMath.readinessGapCount(Array(rows.prefix(2))) == 0)
+    }
+
+    // MARK: - A11(iii) (vòng 2): trường tin cậy thấp + cờ kế tiếp
+
+    static func runReviewConfidenceTests(_ check: (String, Bool) -> Void) {
+        check("RC01-chi-tin-hieu-thap-moi-to",
+              ReviewConfidence.lowFields(vendor: 0.5, date: 0.9, total: 0.84) == ["vendor", "total"])
+        check("RC02-khong-tin-hieu-0-khong-to-va-0.85-khong-to",
+              ReviewConfidence.lowFields(vendor: 0, date: 0.85, total: 1).isEmpty)
+        let t = ["flags", "vendor", "total"]
+        check("RC03-cờ-ke-tiep-xoay-vong",
+              ReviewConfidence.nextTarget(targets: t, after: nil) == "flags"
+              && ReviewConfidence.nextTarget(targets: t, after: "flags") == "vendor"
+              && ReviewConfidence.nextTarget(targets: t, after: "total") == "flags"
+              && ReviewConfidence.nextTarget(targets: t, after: "gone") == "flags"
+              && ReviewConfidence.nextTarget(targets: [], after: nil) == nil)
     }
 }

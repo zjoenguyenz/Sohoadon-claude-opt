@@ -415,3 +415,31 @@ enum AuditTrail {
         return out
     }
 }
+
+// MARK: - A11(iii): trường tin cậy thấp ở Kiểm Lại
+
+/// A11 (vòng 2, WP8; DESIGN-AUDIT §4.7): trường nào cần tô cảnh báo.
+/// Chỉ khi bộ đọc CÓ tín hiệu tin cậy (> 0) và tín hiệu đó < 0.85 —
+/// 0 nghĩa là "không có tín hiệu" (màn cũ cũng ẩn % tổng khi = 0),
+/// không phải "tin cậy thấp". Thứ tự cố định: tiệm, ngày, tổng.
+enum ReviewConfidence {
+    static let threshold = 0.85
+
+    static func isLow(_ c: Double) -> Bool { c > 0 && c < threshold }
+
+    static func lowFields(vendor: Double, date: Double, total: Double) -> [String] {
+        var out: [String] = []
+        if isLow(vendor) { out.append("vendor") }
+        if isLow(date) { out.append("date") }
+        if isLow(total) { out.append("total") }
+        return out
+    }
+
+    /// Đích nhảy "cờ kế tiếp": khối cảnh báo (nếu có) rồi các trường
+    /// tin cậy thấp. `after` = đích vừa nhảy tới (nil = bắt đầu).
+    static func nextTarget(targets: [String], after current: String?) -> String? {
+        guard !targets.isEmpty else { return nil }
+        guard let current, let i = targets.firstIndex(of: current) else { return targets[0] }
+        return targets[(i + 1) % targets.count]
+    }
+}
