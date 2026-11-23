@@ -46,6 +46,7 @@ enum HarnessUnitTests {
         runRetentionPolicyTests(check)
         runRestorePlannerTests(check)
         runExportKitTests(check)
+        runCostcoPDFVendorTests(check)
         return lines
     }
 
@@ -1831,5 +1832,69 @@ enum HarnessUnitTests {
               && EstimateRule.estimatedFields(landingFlag: false, rawSubtotalMissing: true,
                                               rawTaxMissing: true, rawTotalMissing: true,
                                               userEntered: []).isEmpty)
+    }
+
+    // MARK: - A4: tờ PDF Costco đọc RỖNG tên tiệm (ca thật 2026-11-22)
+    //
+    // LƯU Ý TRUNG THỰC: chữ trích của tờ PDF thật KHÔNG có trong repo.
+    // Đây là bản DỰNG LẠI TỔNG HỢP từ các dữ kiện Leader ghi về tờ đó
+    // (subtotal 221.14 · thuế 12.97 · total 234.11 · thẻ •• 2586 · địa
+    // chỉ 10220 S MEMORIAL DR · không có dòng tên COSTCO) theo khuôn
+    // tờ Costco Tulsa #1207 có thật trong corpus (L-R01). Chạy ĐÚNG
+    // đường app: ReceiptReader.read nguồn pdfTextLayer, confidence 1.0
+    // như ScanView.textLayerLines.
+    private static func runCostcoPDFVendorTests(_ check: (String, Bool) -> Void) {
+        guard VendorData.shared.dataVersion != "unloaded" else {
+            check("A4-00-vendors-json-phai-nap-duoc", false)
+            return
+        }
+        func read(_ text: String) -> ParseResult {
+            let lines = text.split(separator: "\n").map {
+                OCRLine(text: String($0), confidence: 1.0)
+            }
+            return ReceiptReader.read(ReadRequest(
+                source: .pdfTextLayer, imageFileName: "A4-SYNTH.pdf",
+                textLines: lines)).result
+        }
+        let body = """
+        Member 111987102109
+        1811598 H&S SHAMPOO 89.99 A
+        2008132 ALWAYS FLEX 45.49 A
+        2218587 SWIFFER DUST 33.97 A
+        5161251 UNSTPBL FRSH 24.99 A
+        1840548 DOWNY FABRIC 16.71 A
+        112266 PANETTONE 9.99 F
+        SUBTOTAL 221.14
+        TAX 12.97
+        **** TOTAL 234.11
+        XXXXXXXXXXXX2586
+        APPROVED - Purchase
+        AMOUNT: $234.11
+        TOTAL NUMBER OF ITEMS SOLD = 6
+        11/20/2026 14:17
+        """
+        let synth = "10220 S MEMORIAL DR\nTULSA, OK 74133\n" + body
+        let r = read(synth)
+        let tag = "vendor=\(r.vendor ?? "nil")·src=\(r.vendorSource ?? "nil")"
+            + "·sub=\(r.subtotalCents.map(String.init) ?? "nil")"
+            + "·tax=\(r.taxTotalCents)·total=\(r.totalCents.map(String.init) ?? "nil")"
+            + "·card=\(r.cardLast4 ?? "nil")"
+        check("A4-01-costco-pdf-ten-tiem-tu-neo-dia-chi[\(tag)]",
+              r.vendor?.uppercased() == "COSTCO" && r.vendorSource == "tier2-anchor")
+        check("A4-02-so-tien-giu-nguyen-221.14-12.97-234.11[\(tag)]",
+              r.subtotalCents == 22114 && r.taxTotalCents == 1297
+              && r.totalCents == 23411 && r.cardLast4 == "2586")
+        // Không neo nào -> KHÔNG đoán tên tiệm (để trống cho anh duyệt).
+        let none = read("TULSA, OK 74133\n" + body)
+        check("A4-03-khong-neo-thi-khong-doan[vendor=\(none.vendor ?? "nil")]",
+              none.vendor == nil)
+        // Số nhà lệch một chữ số -> không phải kho này -> không đoán.
+        let near = read("10221 S MEMORIAL DR\nTULSA, OK 74133\n" + body)
+        check("A4-04-dia-chi-gan-giong-khong-du[vendor=\(near.vendor ?? "nil")]",
+              near.vendor == nil)
+        // Neo cũ vẫn đúng: tờ có dòng tên COSTCO giữ nấc 1.
+        let named = read("COSTCO\nWHOLESALE\nTulsa #1207\n10220 S. Memorial Drive\n" + body)
+        check("A4-05-co-ten-in-van-la-nac-1[src=\(named.vendorSource ?? "nil")]",
+              named.vendor == "Costco" && named.vendorSource == "tier1-exact")
     }
 }

@@ -1,6 +1,6 @@
 {
  "comment": "Vendor = DỮ LIỆU (DESIGN-FINAL §3.4 / M7). Seed: 9 hãng của WP5 (giữ nguyên tên hiển thị + tên khớp đã kiểm chứng) + T-Johnnys Seafood + Pan-Asia trích TỪ CORPUS ĐÓNG BĂNG (dòng header thật trong answers-lr.json / luồng A0 buổi đo 2026-11-11), không gõ từ trí nhớ. Neo phụ: địa chỉ/điện thoại/cụm chữ đọc từ chính các ca corpus ghi kèm ở trường note của từng neo. Thêm vendor mới = thêm mục dữ liệu + ca sinh nó thành fixture hồi quy + bump dataVersion — KHÔNG sửa code.",
- "dataVersion": "vendors-2026-11-18-v44",
+ "dataVersion": "vendors-2026-11-22-v45",
  "vendors": [
   {
    "anchors": [
@@ -58,6 +58,24 @@
      "kind": "phrase",
      "note": "Hai dòng đầu 'COSTCO / WHOLESALE' của L-R01 (A0) — cụm sau khi nối dòng liên tiếp.",
      "value": "COSTCO WHOLESALE",
+     "weight": "weak"
+    },
+    {
+     "kind": "address",
+     "note": "A4 (vòng 2): địa chỉ kho Costco Tulsa #1207 — dòng '10220 S. Memorial Drive' của L-R01 (A0, giấy thật của anh) và '10220 S MEMORIAL DR' trên tờ PDF Costco 2026-11-22 (vendor đọc RỖNG dù số tiền đúng). Neo mạnh: số nhà + tên đường là của riêng kho này.",
+     "value": "10220 S MEMORIAL",
+     "weight": "strong"
+    },
+    {
+     "kind": "phone",
+     "note": "A4 (vòng 2): dòng '918-710-2220' của L-R01 (A0) — điện thoại kho Costco Tulsa #1207.",
+     "value": "9187102220",
+     "weight": "strong"
+    },
+    {
+     "kind": "phrase",
+     "note": "A4 (vòng 2): số kho 'Tulsa #1207' của L-R01 (A0) — neo yếu, chỉ cộng loại neo.",
+     "value": "TULSA 1207",
      "weight": "weak"
     }
    ],
