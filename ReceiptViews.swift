@@ -1526,6 +1526,8 @@ struct ReceiptDetailView: View {
         receipt.storeNumber = result.storeNumber
         if let date = result.date {
             receipt.date = date
+            // A6: ngày đổi -> năm thuế có thể đổi -> hạn lưu giữ theo.
+            receipt.applyRetentionPolicy()
         }
         receipt.subtotalCents = result.subtotalCents
         receipt.totalCents = result.totalCents
@@ -2788,6 +2790,8 @@ struct ReviewView: View {
         if receipt.status == .reviewed {
             receipt.reviewedAt = Date()
         }
+        // A6: hạn lưu giữ 7 năm theo năm thuế (chỉ hiển thị).
+        receipt.applyRetentionPolicy()
 
         modelContext.insert(receipt)
         for (index, parsed) in draft.result.items.enumerated() {

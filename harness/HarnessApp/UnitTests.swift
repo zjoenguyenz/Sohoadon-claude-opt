@@ -43,6 +43,7 @@ enum HarnessUnitTests {
         runIntegrityPlannerTests(check)
         runTaxLandingTests(check)
         runOfficialRuleTests(check)
+        runRetentionPolicyTests(check)
         return lines
     }
 
@@ -1578,5 +1579,26 @@ enum HarnessUnitTests {
         }.reduce(0) { $0 + OfficialReceiptRule.countedCents($1.paid) }
         check("OR03-tong-truoc-sau-cung-so-500-to",
               sameTotals && oldPending == newPending)
+    }
+
+    // MARK: - A6: hạn lưu giữ 7 năm tất định
+    private static func runRetentionPolicyTests(_ check: (String, Bool) -> Void) {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        let d2026 = RetentionPolicy.retentionUntil(taxYear: 2026)
+        check("RP01-2026-ra-2033-12-31Z",
+              d2026.map { iso.string(from: $0) } == "2033-12-31T00:00:00Z")
+        check("RP02-tat-dinh-hai-lan-goi",
+              RetentionPolicy.retentionUntil(taxYear: 2019)
+                == RetentionPolicy.retentionUntil(taxYear: 2019))
+        check("RP03-nam-cua-han", d2026.map { RetentionPolicy.year(of: $0) } == 2033)
+        let now = iso.date(from: "2026-11-22T12:00:00Z")!
+        let past = iso.date(from: "2025-12-31T00:00:00Z")!
+        let soon = iso.date(from: "2027-06-30T00:00:00Z")!
+        let far = iso.date(from: "2030-12-31T00:00:00Z")!
+        check("RP04-nguong-12-thang",
+              RetentionPolicy.reachesHorizon(retentionUntil: past, now: now)
+              && RetentionPolicy.reachesHorizon(retentionUntil: soon, now: now)
+              && !RetentionPolicy.reachesHorizon(retentionUntil: far, now: now))
     }
 }

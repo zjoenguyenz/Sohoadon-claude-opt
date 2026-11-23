@@ -341,6 +341,16 @@ extension Receipt {
     var countedAmountCents: Int {
         OfficialReceiptRule.countedCents(amountPaidCents)
     }
+
+    /// A6: hạn lưu giữ suy từ năm thuế hiện tại (không ghi gì).
+    var computedRetentionUntil: Date? {
+        RetentionPolicy.retentionUntil(taxYear: taxYear)
+    }
+    /// A6: gán retentionUntil theo năm thuế — gọi tại điểm TẠO và
+    /// điểm có thể ĐỔI ngày/năm thuế. Không bao giờ xoá gì.
+    func applyRetentionPolicy() {
+        retentionUntil = computedRetentionUntil
+    }
 }
 
 extension Sequence where Element == Receipt {

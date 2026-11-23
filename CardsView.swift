@@ -309,6 +309,18 @@ struct CardsView: View {
                 } footer: {
                     Text("Log chỉ ghi sự kiện kỹ thuật trên máy (mở app, bộ chọn thư mục, lượt gương, lượt đồng bộ Drive) kèm giờ — không ghi nội dung hoá đơn, không ghi token. Khi xuất, đường dẫn thư mục nhà được thay bằng \"~\" trước khi rời máy; token Google nằm ở Keychain của máy và không bao giờ vào log.")
                 }
+                // A6: hạn lưu giữ 7 năm — CHỈ XEM, không xoá gì.
+                Section {
+                    NavigationLink {
+                        RetentionHorizonView()
+                    } label: {
+                        Label("Tờ tới hạn lưu giữ 7 năm", systemImage: "archivebox")
+                    }
+                } header: {
+                    Text("Lưu giữ hồ sơ")
+                } footer: {
+                    Text("Hạn lưu giữ = 31/12 của năm thuế + 7. Danh sách chỉ để anh xem; app không bao giờ tự xoá hoá đơn hay ảnh gốc.")
+                }
             }
             .navigationTitle("Thẻ & Cài Đặt")
             .onAppear {
@@ -1002,5 +1014,49 @@ struct TaxAreaEditorView: View {
             .keyboardType(.decimalPad)
             .multilineTextAlignment(.trailing)
             .frame(width: 90)
+    }
+}
+
+// MARK: - A6: danh sách tờ tới ngưỡng lưu giữ 7 năm (chỉ xem)
+
+/// Liệt kê tờ có hạn lưu giữ đã qua hoặc rơi trong 12 tháng tới.
+/// Tờ cũ chưa được gán retentionUntil thì hạn được TÍNH từ năm
+/// thuế để hiển thị (không ghi lại vào sổ). Không có nút xoá.
+struct RetentionHorizonView: View {
+    @Query(sort: \Receipt.date) private var receipts: [Receipt]
+
+    private var dueRows: [(receipt: Receipt, until: Date)] {
+        let now = Date()
+        return receipts.compactMap { receipt in
+            guard let until = receipt.retentionUntil
+                    ?? receipt.computedRetentionUntil,
+                  RetentionPolicy.reachesHorizon(retentionUntil: until, now: now)
+            else { return nil }
+            return (receipt, until)
+        }
+    }
+
+    var body: some View {
+        let rows = dueRows
+        List {
+            Section {
+                if rows.isEmpty {
+                    Text("Chưa có tờ nào tới hạn lưu giữ trong 12 tháng tới.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(rows, id: \.receipt.id) { row in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.receipt.vendor.isEmpty ? "(Chưa rõ tiệm)" : row.receipt.vendor)
+                            .font(.body.weight(.semibold))
+                        Text("Năm thuế \(String(row.receipt.taxYear)) · hạn 31/12/\(String(RetentionPolicy.year(of: row.until)))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } footer: {
+                Text("\(rows.count) tờ. Chỉ xem — app không tự xoá. Hạn = 31/12 năm thuế + \(RetentionPolicy.years).")
+            }
+        }
+        .navigationTitle("Hạn lưu giữ")
     }
 }

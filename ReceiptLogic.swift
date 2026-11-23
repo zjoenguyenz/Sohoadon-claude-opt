@@ -303,3 +303,37 @@ enum OfficialReceiptRule {
         amountPaidCents ?? 0
     }
 }
+
+// MARK: - A6: hạn lưu giữ 7 năm (tất định theo năm thuế)
+
+/// A6 (vòng 2): `Receipt.retentionUntil` có sẵn trong model nhưng
+/// chưa nơi nào gán. Luật tất định: hạn = 31/12 của (năm thuế + 7),
+/// 00:00 UTC theo lịch Gregory — cùng năm thuế luôn ra cùng một hạn,
+/// không phụ thuộc múi giờ máy. CHỈ để HIỂN THỊ: app không bao giờ
+/// tự xoá hoá đơn hay file gốc vì hạn này.
+enum RetentionPolicy {
+    static let years = 7
+
+    private static let utcCalendar: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }()
+
+    static func retentionUntil(taxYear: Int) -> Date? {
+        utcCalendar.date(from: DateComponents(
+            year: taxYear + years, month: 12, day: 31))
+    }
+
+    /// Tờ "tới ngưỡng lưu giữ": hạn đã qua hoặc rơi trong
+    /// `windowDays` ngày tới tính từ `now`.
+    static func reachesHorizon(retentionUntil: Date, now: Date,
+                               windowDays: Int = 365) -> Bool {
+        retentionUntil <= now.addingTimeInterval(Double(windowDays) * 86_400)
+    }
+
+    /// Năm (UTC) của một hạn — để hiển thị nhóm.
+    static func year(of date: Date) -> Int {
+        utcCalendar.component(.year, from: date)
+    }
+}
