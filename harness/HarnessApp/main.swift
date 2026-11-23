@@ -298,6 +298,13 @@ func printCaseTrace(name: String, run: ImageRun) {
     for t in r.taxes {
         print("TRACE-TAX label=\(t.label) amount=\(t.amountCents) line=\(t.lineIndex.map(String.init) ?? "nil")")
     }
+    // Dòng CUỐI mà parse nhìn thấy (sau ROI) — chỉ số dòng của thuế ở
+    // trên trỏ vào mảng này, không phải mảng dòng ráp ban đầu.
+    for (i, t) in r.rawText.components(separatedBy: "\n").enumerated() {
+        let fam = CandidateFactory.labelFamily(
+            of: t, hasMoney: t.contains { $0.isNumber }).family
+        print("TRACE-FINAL \(i) [\(fam)] \(t)")
+    }
     for s in r.selectionTrace { print("TRACE-SEL \(s)") }
     for k in run.outcome.provenance.keys.sorted() {
         print("TRACE-PROV \(k) = \(String(describing: run.outcome.provenance[k]!))")
@@ -1140,11 +1147,21 @@ case "roigate":
     // "không có tạm tính", trong khi làn bịa ra tạm tính lại được
     // điểm tốt hơn. Ca loại này chấm bằng SO TỪNG TRƯỜNG với GT:
     // tạm tính (phải nil), tổng, danh sách thuế — số trường đúng.
+    //
+    // SỬA A9 (vòng 2, lượt 2): bản đầu cộng điểm "tạm tính = nil" và
+    // "thuế = []" cho CẢ làn không đọc được gì — làn đọc rỗng (thâm hụt
+    // 200_000, không thấy cả tổng) thắng làn đọc ĐÚNG tổng (6 ca đỏ giả
+    // ở lượt chạy 45133478103: 09-safeway, 24-hy-vee-gas, 25-exxon,
+    // 37-cvs-3, WR-shell, WR-walgreens — số của app y hệt nền v3). Điểm
+    // "vắng mặt" chỉ có nghĩa khi làn đã đọc ra tờ: tổng phải khớp GT
+    // trước, rồi mới chấm tạm tính vắng + danh sách thuế.
     func fieldScore(_ p: ParseResult, gt: [String: Any]) -> Int {
-        var score = 0
+        let totalOK: Bool
+        if let t = gt["total"] as? Int { totalOK = p.totalCents == t }
+        else { totalOK = gt["total"] is NSNull && p.totalCents == nil }
+        guard totalOK else { return 0 }
+        var score = 1
         if p.subtotalCents == nil { score += 1 }
-        if let t = gt["total"] as? Int, p.totalCents == t { score += 1 }
-        if gt["total"] is NSNull, p.totalCents == nil { score += 1 }
         let gtTaxes = ((gt["taxes"] as? [Int]) ?? []).sorted()
         if p.taxes.map({ $0.amountCents }).sorted() == gtTaxes { score += 1 }
         return score
