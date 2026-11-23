@@ -87,6 +87,14 @@ struct ScanView: View {
     /// WP3: hàng chờ nạp NHIỀU file một lúc (Master Plan WP3) — xử lý lần
     /// lượt từng file, mỗi file một màn Review; đóng Review thì nạp tiếp.
     @State private var importQueue: [URL] = []
+    /// A11(i) (vòng 2, WP8): số file đã lấy ra khỏi hàng chờ trong lô
+    /// đang chạy — để hiện "Đang đọc 3/12 tờ…". Chỉ HIỂN THỊ: thứ tự
+    /// đọc, luồng Kiểm Lại từng tờ và hợp đồng bản nháp không đổi.
+    @State private var importBatchTaken = 0
+    /// Dòng tiến độ cho lần đọc KẾ TIẾP của đường nạp file — runRead
+    /// dùng một lần rồi xoá; presentDraft cũng xoá (không rò sang
+    /// lượt chụp camera).
+    @State private var importProgressText: String? = nil
     /// GÓI V4-4 (D-V4-2, sửa A2-05): cổng chất lượng theo TỪNG TỜ —
     /// mỗi lần đọc tạo một QualityGate MỚI (xem các điểm gọi
     /// runRead), không còn instance sống cho cả phiên.
@@ -651,7 +659,8 @@ struct ScanView: View {
                          originalFileNames: [String] = [],
                          rawTextIsPDFTextLayer: Bool = false) {
         isProcessing = true
-        statusText = "Đang đọc hoá đơn…"
+        statusText = importProgressText ?? "Đang đọc hoá đơn…"
+        importProgressText = nil
         errorText = nil
         var request = request
         // GÓI V4-4 (D-V4-2): cổng MỚI cho riêng lần đọc này khi
@@ -728,6 +737,7 @@ struct ScanView: View {
     /// đồng chống mất bản nháp (L-2026-11-13-14) chỉ có một nơi
     /// thi hành.
     private func presentDraft(_ newDraft: ScanDraft, note: String?) {
+        importProgressText = nil
         statusText = note
         // G3: bản nháp MỚI ra đời thì không có lớp sửa dở khôi
         // phục nào đi kèm — xoá dấu vết của bản nháp trước kẻo
@@ -858,8 +868,16 @@ struct ScanView: View {
     /// lúc đóng màn Review (onDismiss), và các nhánh lỗi/thoát sớm của
     /// đường nạp file (để một file hỏng không chặn cả lô).
     private func processNextImportedFile() {
+        // A11(i): lô cạn và không còn tờ nào đang dở -> đếm lại từ 0.
+        if importQueue.isEmpty, draft == nil, blockedDraft == nil, !isProcessing {
+            importBatchTaken = 0
+            importProgressText = nil
+        }
         guard draft == nil, blockedDraft == nil, !isProcessing, !importQueue.isEmpty else { return }
         let url = importQueue.removeFirst()
+        importBatchTaken += 1
+        let total = importBatchTaken + importQueue.count
+        importProgressText = total > 1 ? "Đang đọc \(importBatchTaken)/\(total) tờ…" : nil
         processImportedFile(url: url)
     }
 
