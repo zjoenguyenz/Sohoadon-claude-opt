@@ -342,7 +342,8 @@ func printTaxSourceLine(name: String, run: ImageRun) {
         + taxSource($0, labels: labels, rates: rates) }
     let posOnly = p.taxes.contains { taxSource($0, labels: labels, rates: rates) == "POSITION-ONLY" }
     print("TAXSRC \(name) arb=\(p.arbiterStatus ?? "nil") e1=\(run.e1) e2=\(run.e2) "
-        + "taxes=[\(srcs.joined(separator: ","))] positionOnly=\(posOnly ? "YES" : "no")")
+        + "taxes=[\(srcs.joined(separator: ","))] positionOnly=\(posOnly ? "YES" : "no") "
+        + "fl299Flag=\(p.warnings.contains { $0.contains("chỉ suy từ VỊ TRÍ") } ? "YES" : "no")")
 }
 
 func printAxisTrace(name: String, run: ImageRun) {

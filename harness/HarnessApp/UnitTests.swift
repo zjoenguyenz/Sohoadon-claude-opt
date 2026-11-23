@@ -51,6 +51,7 @@ enum HarnessUnitTests {
         runAuditTrailTests(check)
         runReadinessTests(check)
         runReviewConfidenceTests(check)
+        runFL299FlagTests(check)
         return lines
     }
 
@@ -2008,5 +2009,169 @@ enum HarnessUnitTests {
               && ReviewConfidence.nextTarget(targets: t, after: "total") == "flags"
               && ReviewConfidence.nextTarget(targets: t, after: "gone") == "flags"
               && ReviewConfidence.nextTarget(targets: [], after: nil) == nil)
+    }
+
+    // MARK: - FL-299 (vòng 3, phương án dự phòng): cờ "chưa chắc"
+
+    /// Bộ dòng CUỐI (sau ROI) do harness in ở lượt 45221693993
+    /// (TRACE-FINAL) cho 4 ca trace.
+    static func runFL299FlagTests(_ check: (String, Bool) -> Void) {
+        let exxon: [String] = [
+            "FEXKON EXPRESSE PAY",
+            "10/27/2020 78989551",
+            "01:48-32 PM",
+            "PUMP# 1",
+            "Plus-Extra 18.566G",
+            "PRICE/GAL $2.349",
+            "DISCOUNTS BEFORE",
+            "FUELING",
+            "Premium /GAL $-0.100",
+            "Premium /GAL $-0.106",
+            "FUEL TOTAL",
+            "Deluxe Wash",
+            "$",
+            "$",
+            "TOTAL = $",
+            "CREDIT",
+            "24.82",
+            "7.00",
+            "31.82",
+            "31.82",
+            "CREDIT $ 31.82",
+        ]
+        let kroger: [String] = [
+            "oo len",
+            "мroge TM",
+            "FPFSH",
+            "FOR",
+            "Kroger EVERIONE ONE.",
+            "CHEC 503 JA dI",
+            "2.99 T",
+            "ARE BERTFIEAION AYPASSED 2.99 T",
+            "HEINEKEN LAGER 07.61.",
+            "Age Restricted: 21 1.69 B",
+            "PEPSI",
+            "a 10/10.00 B",
+            "GATORADE 1.00",
+            "FOCO CNT JCE 1.49 F",
+            "KROGER PLUS CUSTOMER *******2263",
+            "TAX 0.49",
+            "**** BALANCE 10.65",
+            "FS BAL DUE 4.18",
+            "EBT FOOD Purchase ***************683",
+            "REF#: 045755 TOTAL: 4.18",
+            "PURCHASE: 10,65 CASHBACK: 0.00",
+            "EBI F/S BALANCE: $279.37",
+            "EBT CASH BALANCE: $ 4.18",
+            "EBT FOOD",
+            "US DEBIT Purchase",
+            "************5171 - C TOTAL: 6.47",
+            "REF#: 000000 CASHBACK: 0.00",
+            "PURCHASE: 6.41",
+            "AID: A0000000980840",
+            "TC: 590B94D6085BCF7F",
+            "VERIFIED BY PTN 6.47",
+            "DEBIT 0.00",
+            "FS CHG 0.00",
+            "CHANGE",
+            "TOTAL NUMBER OF ITEMS SOLD =",
+            "08/02/20 01:25pm 347 503 97 999999503",
+            "**************************************",
+            "TELL US HOW WE ARE DOINGI",
+            "EARN 50 BONUS FUEL POINTSI",
+            "6o to www.krogerfeedback.com",
+            "Date: 08/02/20",
+            "Tine: 01:25pm",
+            "Entry ID: 034-112-97-347-503-600",
+            "No purchase necessary",
+            "See website for offical rules",
+            "*************************************",
+            "Remaining July Fuel Points: 243",
+            "*************************************",
+            "uel Points Earned Today:",
+            "ocal Aug Fuel Points:",
+            "Annual Cand Cavinas $169.51",
+        ]
+        let publix4: [String] = [
+            "publix",
+            "Salem Road Statfon",
+            "13015 Brown Bridge Rd",
+            "Covingtan, GA 30016",
+            "Store Manager: Cheinel Byrf",
+            "678-342-0766",
+            "0744 9AN 058 801",
+            "ULTIMTE WHL SUB HT",
+            "Order Total 12.",
+            "Regular Tax 12.40",
+            "Grand Total 0.81",
+            "Cash 13.36",
+            "Change 14.00",
+            "0.64",
+            "Receipt ID: 0744 9AN 058 801",
+            "Your cashier was Richard",
+            "09/10/2023 17:16 S0744 R105 8801 CO224",
+            "Join the Publix family!",
+            "Apply today at apply.publtx.jobs.",
+            "We're an erual opportunity emplayer.",
+        ]
+        let cvs3: [String] = [
+            "•CVS pharmacy",
+            "6750 WILKINSON BLVD",
+            "BELMONT, NC 28012",
+            "704.825.6929",
+            "REG#13 TRN#7595 CSHR#1448588 STR#2233",
+            "Helped by: ZACHERY",
+            "ExtraCare Card #: ** **8779",
+            "F RX #**#5610010",
+            ": ****3020010 .OON",
+            "****5550010 4.00N",
+            "*#**5900010 4.00N",
+            "32.91N",
+            "4 ITEMS",
+            "Survey ID #",
+            "8580 4341 2186 178 52",
+            "TOTAL 40.91",
+            "CHARGE 40 .91",
+            "************3508 RF",
+            "MASTERCARD ************3508",
+            "APPROVED# 04241Z REF# 136956",
+            "TRAN TYPE: SALE AID: A0000000041010",
+            "TC: 58EFC8214AAD558B TERMINAL# 88154341",
+            "NO SIGNATURE REQUIRED CVM: 1E0300",
+            "TVR( 95): 0000008000",
+        ]
+        let flag = "chỉ suy từ VỊ TRÍ"
+        func L(_ t: [String]) -> [OCRLine] { t.map { OCRLine(text: $0, confidence: 0.9) } }
+        // Diện của cờ, trên đúng thuế cuối mà app đọc ở mỗi ca (TAXSRC):
+        let ex = ReceiptParser.unsupportedPositionalTaxes(
+            lines: L(exxon), taxes: [ParsedTaxLine(label: "TAX", amountCents: 700, lineIndex: 17)],
+            vendorVariants: nil)
+        check("FLAG-01-exxon-700-thuoc-dien-co[\(ex.map { $0.amountCents })]",
+              ex.map { $0.amountCents } == [700])
+        let kr = ReceiptParser.unsupportedPositionalTaxes(
+            lines: L(kroger), taxes: [ParsedTaxLine(label: "TAX 0", amountCents: 49, lineIndex: 15)],
+            vendorVariants: nil)
+        check("FLAG-02-kroger-co-nhan-TAX-khong-co", kr.isEmpty)
+        // Cùng tờ Exxon nhưng có một dòng chỉ-nhãn "TAX" ở bất cứ đâu
+        // -> có bằng chứng in -> không cờ.
+        var exTax = exxon; exTax[11] = "TAX"
+        check("FLAG-03-co-nhan-TAX-o-dau-cung-tat-co",
+              ReceiptParser.unsupportedPositionalTaxes(
+                lines: L(exTax), taxes: [ParsedTaxLine(label: "TAX", amountCents: 700, lineIndex: 17)],
+                vendorVariants: nil).isEmpty)
+        // Thuế ước tính (không có dòng) không thuộc diện.
+        check("FLAG-04-thue-uoc-tinh-khong-thuoc-dien",
+              ReceiptParser.unsupportedPositionalTaxes(
+                lines: L(cvs3), taxes: [ParsedTaxLine(label: "Thuế ước tính", amountCents: 321, lineIndex: nil)],
+                vendorVariants: nil).isEmpty)
+        // Đường parse thật: thuế nào đọc ra trên tờ Exxon đều mang cờ;
+        // Kroger / Publix-4 / CVS-3 không mang cờ.
+        let pe = ReceiptParser.parseV4(lines: L(exxon))
+        check("FLAG-05-exxon-parseV4-thue-luon-mang-co[taxes=\(pe.taxes.map { $0.amountCents })]",
+              pe.taxes.isEmpty || pe.warnings.contains { $0.contains(flag) })
+        for (name, t) in [("kroger", kroger), ("publix4", publix4), ("cvs3", cvs3)] {
+            let r = ReceiptParser.parseV4(lines: L(t))
+            check("FLAG-06-\(name)-khong-mang-co", !r.warnings.contains { $0.contains(flag) })
+        }
     }
 }
