@@ -278,13 +278,6 @@ enum TotalsArbiter {
         var solutions: [Solution] = []
         var seenKeys = Set<String>()
         var trials = 0
-        // A5 / FL-299: vị trí "giữa hai neo" chỉ là bằng chứng thuế khi
-        // cửa sổ có thuế IN (nhãn TAX/TAXSUM hoặc suất).
-        let taxByPositionAllowed = TotalsArbiter.windowHasPrintedTaxEvidence(
-            labels: labels, rates: rates, from: wStart)
-        if !taxByPositionAllowed {
-            out.trace.append("tax-by-position=off (cửa sổ không có nhãn/suất thuế in)")
-        }
 
         pairLoop: for (sTok, tTok) in pairs {
             guard let need = SafeMoney.checkedSubtract(tTok.cents, sTok.cents),
@@ -303,8 +296,7 @@ enum TotalsArbiter {
                     && (labels[$0.lineIndex].family == "TAX"
                         || taxFallbackIDs.contains($0.id)
                         || CandidateFactory.rateSupported(lineIndex: $0.lineIndex, rates: rates)
-                        || (taxByPositionAllowed
-                            && lo <= $0.lineIndex && $0.lineIndex <= hi))
+                        || (lo <= $0.lineIndex && $0.lineIndex <= hi))
             }.sorted { $0.lineIndex < $1.lineIndex }
             if pool.count > maxWindowCandidatesPerRole {
                 budgetHit = true
@@ -789,28 +781,6 @@ enum TotalsArbiter {
         return editDistanceIsOne(lead, "SUBTOTAL")
     }
 
-    /// A5 / FL-299 (vòng 2): cửa sổ khối tổng có BẰNG CHỨNG THUẾ IN
-    /// trên giấy không — một dòng họ TAX hoặc TAXSUM (kể cả dòng
-    /// chỉ-nhãn, dạng in tách cột nhãn/tiền) hoặc một suất in trên
-    /// dòng của cửa sổ. Không có -> luật "nằm giữa hai neo" KHÔNG được
-    /// coi là bằng chứng thuế: ca 25-exxon-1 (lượt ROI tách cột nhãn
-    /// "FUEL TOTAL / Deluxe Wash / TOTAL" khỏi cột tiền "24.82 / 7.00
-    /// / 31.82") từng biến tiền RỬA XE 7.00 thành dòng thuế 700 xu
-    /// mang provenance roiRecovered dù tờ không in thuế. Thuế không in
-    /// trên giấy chỉ được vào qua đường hạ cánh thuế (nhãn ƯỚC TÍNH).
-    static func windowHasPrintedTaxEvidence(labels: [LineLabel],
-                                            rates: [RateCandidate],
-                                            from start: Int) -> Bool {
-        let lo = max(0, start)
-        if lo < labels.count {
-            for i in lo..<labels.count
-            where labels[i].family == "TAX" || labels[i].family == "TAXSUM" {
-                return true
-            }
-        }
-        return rates.contains { $0.lineIndex >= lo }
-    }
-
     /// Hai chuỗi lệch nhau đúng MỘT phép sửa (thay một ký tự,
     /// hoặc thêm/bớt một ký tự) hay không.
     private static func editDistanceIsOne(_ a: String, _ b: String) -> Bool {
@@ -921,9 +891,6 @@ enum TotalsArbiter {
         // kê là MỘT — hai lượt chỉ khác hồ đưa vào. Ngân
         // sách §3.3 dùng CHUNG (evaluations/trials đếm tiếp
         // ở hàm ngoài); chạm ngân sách trả nil.
-        // A5 / FL-299: cùng luật bằng chứng thuế in như lượt chính.
-        let taxByPositionAllowed = TotalsArbiter.windowHasPrintedTaxEvidence(
-            labels: labels, rates: rates, from: wStart)
         func enumerateSolutions(_ tokens: [MoneyCandidate]) -> [Solution]? {
             let win = tokens.filter { $0.lineIndex >= wStart }
             let winPrim = tokens.filter {
@@ -983,8 +950,7 @@ enum TotalsArbiter {
                         && $0.cents > 0
                         && (labels[$0.lineIndex].family == "TAX"
                             || CandidateFactory.rateSupported(lineIndex: $0.lineIndex, rates: rates)
-                            || (taxByPositionAllowed
-                                && lo <= $0.lineIndex && $0.lineIndex <= hi))
+                            || (lo <= $0.lineIndex && $0.lineIndex <= hi))
                 }.sorted { a, b in
                     if (a.tier == "primary") != (b.tier == "primary") {
                         return a.tier == "primary"

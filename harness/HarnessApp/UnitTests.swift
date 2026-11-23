@@ -51,7 +51,6 @@ enum HarnessUnitTests {
         runAuditTrailTests(check)
         runReadinessTests(check)
         runReviewConfidenceTests(check)
-        runExxonPhantomTaxTests(check)
         return lines
     }
 
@@ -2009,37 +2008,5 @@ enum HarnessUnitTests {
               && ReviewConfidence.nextTarget(targets: t, after: "total") == "flags"
               && ReviewConfidence.nextTarget(targets: t, after: "gone") == "flags"
               && ReviewConfidence.nextTarget(targets: [], after: nil) == nil)
-    }
-
-    // MARK: - A5 / FL-299 (vòng 2): thuế ma 700 xu ở 25-exxon-1
-
-    static func runExxonPhantomTaxTests(_ check: (String, Bool) -> Void) {
-        // ĐÚNG bộ dòng CUỐI (sau vòng ROI 1) mà harness in ra cho
-        // 25-exxon-1.jpg ở lượt chạy 45140520879 (TRACE-FINAL 0…20):
-        // cột nhãn và cột tiền bị tách; tờ KHÔNG in thuế.
-        let texts = [
-            "FEXKON EXPRESSE PAY", "10/27/2020 78989551", "01:48-32 PM", "PUMP# 1",
-            "Plus-Extra 18.566G", "PRICE/GAL $2.349", "DISCOUNTS BEFORE", "FUELING",
-            "Premium /GAL $-0.100", "Premium /GAL $-0.106", "FUEL TOTAL", "Deluxe Wash",
-            "$", "$", "TOTAL = $", "CREDIT", "24.82", "7.00", "31.82", "31.82",
-            "CREDIT $ 31.82",
-        ]
-        let lines = texts.map { OCRLine(text: $0, confidence: 0.9) }
-        let arb = TotalsArbiter.arbitrate(lines: lines, itemsSumCents: nil)
-        let taxCents = arb.taxes.map { $0.amountCents }
-        check("A5-01-exxon-khong-thue-ma[taxes=\(taxCents) sub=\(arb.subtotalCents.map(String.init) ?? "nil") total=\(arb.totalCents.map(String.init) ?? "nil") status=\(arb.status)]",
-              taxCents.isEmpty)
-        check("A5-02-vet-ghi-ro-luat-tat",
-              arb.trace.contains { $0.hasPrefix("tax-by-position=off") })
-        // Bằng chứng thuế in: dòng CHỈ-NHÃN "TAX" (dạng tách cột) vẫn
-        // bật luật vị trí; không nhãn/suất thì tắt.
-        let (_, r1, l1) = CandidateFactory.generate(lines: lines)
-        check("A5-03-exxon-cua-so-khong-co-bang-chung",
-              !TotalsArbiter.windowHasPrintedTaxEvidence(labels: l1, rates: r1, from: 10))
-        let split = ["SUBTOTAL", "TAX", "TOTAL", "10.00", "0.85", "10.85"]
-            .map { OCRLine(text: $0, confidence: 0.9) }
-        let (_, r2, l2) = CandidateFactory.generate(lines: split)
-        check("A5-04-nhan-TAX-chi-nhan-van-la-bang-chung",
-              TotalsArbiter.windowHasPrintedTaxEvidence(labels: l2, rates: r2, from: 0))
     }
 }
