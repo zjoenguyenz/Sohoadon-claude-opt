@@ -283,8 +283,10 @@ struct ReceiptRowView: View {
         // 10 + viền tóc; không có ảnh thì monogram tiệm (màu ổn
         // định theo tên); "Chờ duyệt" thành chip trạng thái.
         HStack(spacing: DS.spaceM) {
+            // OPT-1 (audit #1): ảnh nhỏ đã thu cho ô 46×58 thay vì
+            // giải mã cả ảnh gốc mỗi dòng — hình hiển thị không đổi.
             if let firstOriginal = receipt.allOriginalImageFileNames.first,
-               let image = ImageStore.load(fileName: firstOriginal) {
+               let image = ImageStore.loadThumbnail(fileName: firstOriginal) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -359,7 +361,9 @@ struct ReceiptListView: View {
         }
     }
 
-    private var monthGroups: [(key: String, title: String, items: [Receipt])] {
+    /// OPT-1 (audit #3): nhận tập đã lọc từ body thay vì tự gọi lại
+    /// `filtered` — thân gom nhóm giữ nguyên.
+    private func monthGroups(_ filtered: [Receipt]) -> [(key: String, title: String, items: [Receipt])] {
         let calendar = Calendar.current
         let grouped = Dictionary(grouping: filtered) { receipt -> DateComponents in
             calendar.dateComponents([.year, .month], from: receipt.date)
@@ -404,6 +408,13 @@ struct ReceiptListView: View {
     }
 
     var body: some View {
+        // OPT-1 (audit #3): tính bộ lọc và tập bản-trùng MỘT lần mỗi
+        // lần vẽ. Bản trước gọi `filtered` 9 lần trong thân (mỗi lần
+        // hạ chữ thường toàn bộ ocrRawText khi đang tìm) và dựng lại
+        // `duplicateTargetIDs` cho TỪNG dòng. Cùng đầu vào, cùng
+        // điều kiện, cùng hàm cộng — số hiển thị không đổi.
+        let filtered = self.filtered
+        let duplicateTargetIDs = self.duplicateTargetIDs
         NavigationStack {
             List {
                 // Running total của đúng tập đang lọc/tìm (chuẩn Copilot Money).
@@ -432,7 +443,7 @@ struct ReceiptListView: View {
                         }
                     }
                 }
-                ForEach(monthGroups, id: \.key) { group in
+                ForEach(monthGroups(filtered), id: \.key) { group in
                     Section {
                         ForEach(group.items) { receipt in
                             NavigationLink {

@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 import UIKit
 import PDFKit
+import ImageIO
 
 // MARK: - Phân loại Cá nhân / Business / Chưa rõ
 
@@ -520,9 +521,127 @@ enum ImageStore {
         }
     }
 
+    // MARK: OPT-1 — bộ đệm theo DANH TÍNH file (tên + kích thước + mtime)
+    //
+    // Màn Chi Tiết / Kiểm Lại gọi load() 3–4 lần cho CÙNG một file
+    // trong MỖI lần vẽ thân view (mỗi phím gõ ở ô chữ là một lần
+    // vẽ) — OPTIMIZATION-AUDIT mục #2. Bộ đệm này trả lại đúng ảnh
+    // đã giải mã khi file trên đĩa CHƯA đổi. Ngữ nghĩa giữ nguyên:
+    // - mỗi lần gọi vẫn stat file: file mất -> không có khoá -> đi
+    //   đúng đường cũ (đọc hỏng -> nil), cổng thiếu-ảnh-gốc không
+    //   bao giờ bị bộ đệm che;
+    // - file bị thay (khôi phục từ kho an toàn, gắn lại) -> kích
+    //   thước/mtime đổi -> khoá mới -> đọc lại thật;
+    // - kết quả nil KHÔNG được đệm (lần sau thử lại như cũ).
+    // NSCache tự thả khi máy thiếu bộ nhớ; trần chi phí theo pixel.
+    private static let decodedCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 8
+        cache.totalCostLimit = 96 * 1024 * 1024
+        return cache
+    }()
+
+    /// Khoá danh tính của file: nil khi không stat được (khi đó
+    /// nơi gọi đi thẳng đường cũ, không chạm bộ đệm).
+    private static func identityKey(url: URL, fileName: String,
+                                    variant: String) -> NSString? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? Int,
+              let mtime = attrs[.modificationDate] as? Date else { return nil }
+        return "\(variant)|\(fileName)|\(size)|\(mtime.timeIntervalSinceReferenceDate)" as NSString
+    }
+
+    /// Chi phí ước của một ảnh trong bộ đệm = số byte RGBA khi vẽ.
+    private static func pixelCost(_ image: UIImage) -> Int {
+        let w = Int(image.size.width * image.scale)
+        let h = Int(image.size.height * image.scale)
+        return max(1, w * h * 4)
+    }
+
     static func load(fileName: String) -> UIImage? {
         guard !fileName.isEmpty else { return nil }
         let url = directory.appendingPathComponent(fileName)
+        let key = identityKey(url: url, fileName: fileName, variant: "full")
+        if let key, let cached = decodedCache.object(forKey: key) {
+            return cached
+        }
+        let image = loadUncached(fileName: fileName, url: url)
+        if let key, let image {
+            decodedCache.setObject(image, forKey: key, cost: pixelCost(image))
+        }
+        return image
+    }
+
+    // MARK: OPT-1 — thumbnail cho dòng danh sách (OPTIMIZATION-AUDIT #1)
+
+    private static let thumbnailCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 400
+        cache.totalCostLimit = 48 * 1024 * 1024
+        return cache
+    }()
+
+    /// Ảnh nhỏ cho ô 46×58 pt của ReceiptRowView. Bản trước giải mã
+    /// TOÀN BỘ ảnh gốc (trung vị BenchImages 2.3 MP ≈ 8.9 MB RGBA,
+    /// lớn nhất 100 MP ≈ 382 MB) chỉ để vẽ ô này.
+    ///
+    /// Kích thước chọn để KHÔNG đổi hình: cạnh NGẮN của ảnh nhỏ ≥
+    /// `minShortSidePixels` (mặc định 180 ≥ 58 pt × 3) nên với
+    /// .scaledToFill vào khung 46×58 pt ở màn 3x ảnh vẫn được thu,
+    /// không bao giờ bị phóng. Hướng EXIF áp như UIImage(data:)
+    /// (kCGImageSourceCreateThumbnailWithTransform).
+    /// Không thu nhỏ được (PDF, ảnh vốn đã nhỏ, ImageIO lỗi) -> trả
+    /// đúng load(fileName:) như bản cũ — dòng hiện y như trước.
+    static func loadThumbnail(fileName: String,
+                              minShortSidePixels: Int = 180) -> UIImage? {
+        guard !fileName.isEmpty else { return nil }
+        if fileName.lowercased().hasSuffix(".pdf") {
+            return load(fileName: fileName)
+        }
+        let url = directory.appendingPathComponent(fileName)
+        guard let key = identityKey(url: url, fileName: fileName,
+                                    variant: "thumb\(minShortSidePixels)")
+        else { return load(fileName: fileName) }
+        if let cached = thumbnailCache.object(forKey: key) {
+            return cached
+        }
+        guard let thumb = downsample(url: url,
+                                     minShortSidePixels: minShortSidePixels)
+        else { return load(fileName: fileName) }
+        thumbnailCache.setObject(thumb, forKey: key, cost: pixelCost(thumb))
+        return thumb
+    }
+
+    /// Thu nhỏ bằng ImageIO, không giải mã ảnh toàn phân giải. nil
+    /// khi không đọc được kích thước hoặc ảnh không lớn hơn đích.
+    private static func downsample(url: URL,
+                                   minShortSidePixels: Int) -> UIImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                as? [CFString: Any],
+              let width = props[kCGImagePropertyPixelWidth] as? Int,
+              let height = props[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0 else { return nil }
+        let shortSide = min(width, height)
+        let longSide = max(width, height)
+        guard shortSide > minShortSidePixels else { return nil }
+        let maxPixel = Int((Double(longSide) * Double(minShortSidePixels)
+                            / Double(shortSide)).rounded(.up))
+        guard maxPixel < longSide else { return nil }
+        let thumbOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+        ] as CFDictionary
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions)
+        else { return nil }
+        return UIImage(cgImage: cg)
+    }
+
+    /// Thân nạp NGUYÊN VĂN của bản trước OPT-1 (chỉ đổi tên hàm).
+    private static func loadUncached(fileName: String, url: URL) -> UIImage? {
         if fileName.lowercased().hasSuffix(".pdf") {
             // WP3 (CODE-AUDIT F1 mục 5): bằng chứng là PDF gốc — byte gốc giữ
             // nguyên trong thư mục, hiển thị bằng render trang 1 (PDFKit).
