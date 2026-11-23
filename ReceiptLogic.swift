@@ -278,3 +278,28 @@ enum ReceiptLogic {
         return .approveWithFlagConfirmation(flags: flags)
     }
 }
+
+// MARK: - A7: luật "tờ chính thức" — NGUỒN DUY NHẤT
+
+/// A7 (vòng 2): luật tờ CHÍNH THỨC trước đây được chép tay ở 5 chỗ
+/// (Trang Chủ ×2, Báo Cáo ×2, danh sách ×1) và luật tờ CHỜ DUYỆT ở
+/// 3 chỗ. Nay một nguồn duy nhất, thuần Foundation để harness kiểm
+/// bằng Swift thật. Nguyên văn luật cũ:
+/// - chính thức = status == .reviewed && !excludedFromTotals
+/// - chờ duyệt  = status == .needsReview && !excludedFromTotals
+/// - số được cộng = amountPaidCents ?? 0 (tổng in + tip; thiếu tổng = 0)
+enum OfficialReceiptRule {
+    static func isOfficial(isReviewed: Bool,
+                           excludedFromTotals: Bool) -> Bool {
+        isReviewed && !excludedFromTotals
+    }
+
+    static func isPending(isNeedsReview: Bool,
+                          excludedFromTotals: Bool) -> Bool {
+        isNeedsReview && !excludedFromTotals
+    }
+
+    static func countedCents(_ amountPaidCents: Int?) -> Int {
+        amountPaidCents ?? 0
+    }
+}

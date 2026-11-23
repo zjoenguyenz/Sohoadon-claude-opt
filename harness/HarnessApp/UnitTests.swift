@@ -42,6 +42,7 @@ enum HarnessUnitTests {
         runQualityGateTests(check)
         runIntegrityPlannerTests(check)
         runTaxLandingTests(check)
+        runOfficialRuleTests(check)
         return lines
     }
 
@@ -1517,5 +1518,65 @@ enum HarnessUnitTests {
               && tl18?.report.filledFields.isEmpty == true
               && tl18?.report.blockedReason
                   == "khong-dien-duoc-dinh-nao")
+    }
+
+    // MARK: - A7: luật tờ chính thức một nguồn (OfficialReceiptRule)
+    //
+    // Chứng minh hàm một-nguồn trả ĐÚNG biểu thức chép tay cũ
+    // (status == .reviewed && !excludedFromTotals; needsReview &&
+    // !excluded; amountPaidCents ?? 0) trên TOÀN BỘ không gian vào,
+    // rồi so tổng trước/sau trên cùng một sổ tổng hợp 500 tờ.
+    private static func runOfficialRuleTests(_ check: (String, Bool) -> Void) {
+        let amounts: [Int?] = [nil, 0, 1, -250, 12345, 999_999_99]
+        var truthOK = true
+        for reviewed in [true, false] {
+            let needsReview = !reviewed
+            for excluded in [true, false] {
+                if OfficialReceiptRule.isOfficial(isReviewed: reviewed,
+                        excludedFromTotals: excluded) != (reviewed && !excluded) {
+                    truthOK = false
+                }
+                if OfficialReceiptRule.isPending(isNeedsReview: needsReview,
+                        excludedFromTotals: excluded) != (needsReview && !excluded) {
+                    truthOK = false
+                }
+            }
+        }
+        check("OR01-bang-chan-tri-khop-bieu-thuc-cu", truthOK)
+        check("OR02-countedCents-khop-amountPaid-or-0",
+              amounts.allSatisfy { OfficialReceiptRule.countedCents($0) == ($0 ?? 0) })
+
+        // Sổ tổng hợp tất định (LCG) — 3 loại × 2 trạng thái ×
+        // loại/không loại × số tiền có/không.
+        struct Row { var kind: Int; var reviewed: Bool; var excluded: Bool; var paid: Int? }
+        var seed: UInt64 = 0x5EED_A7
+        func next() -> UInt64 {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return seed >> 33
+        }
+        var rows: [Row] = []
+        for _ in 0..<500 {
+            let paid: Int? = next() % 7 == 0 ? nil : Int(next() % 50_000) - 1_000
+            rows.append(Row(kind: Int(next() % 3), reviewed: next() % 2 == 0,
+                            excluded: next() % 5 == 0, paid: paid))
+        }
+        var sameTotals = true
+        for kind in 0..<3 {
+            let old = rows.filter { $0.kind == kind && $0.reviewed && !$0.excluded }
+                .reduce(0) { $0 + ($1.paid ?? 0) }
+            let new = rows.filter {
+                $0.kind == kind && OfficialReceiptRule.isOfficial(
+                    isReviewed: $0.reviewed, excludedFromTotals: $0.excluded)
+            }.reduce(0) { $0 + OfficialReceiptRule.countedCents($1.paid) }
+            if old != new { sameTotals = false }
+        }
+        let oldPending = rows.filter { !$0.reviewed && !$0.excluded }
+            .reduce(0) { $0 + ($1.paid ?? 0) }
+        let newPending = rows.filter {
+            OfficialReceiptRule.isPending(isNeedsReview: !$0.reviewed,
+                                          excludedFromTotals: $0.excluded)
+        }.reduce(0) { $0 + OfficialReceiptRule.countedCents($1.paid) }
+        check("OR03-tong-truoc-sau-cung-so-500-to",
+              sameTotals && oldPending == newPending)
     }
 }

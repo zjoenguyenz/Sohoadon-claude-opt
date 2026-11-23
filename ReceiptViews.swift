@@ -386,18 +386,14 @@ struct ReceiptListView: View {
     /// (tổng in + tip). Trước gói này tổng chạy tính cả tờ
     /// đang chờ duyệt và dùng totalCents trơn.
     private func sum(of kind: Classification, in items: [Receipt]) -> Int {
-        items.filter {
-            $0.classification == kind && $0.status == .reviewed
-                && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
+        // A7: luật chính thức một nguồn (OfficialReceiptRule).
+        items.officialTotalCents(kind: kind)
     }
 
     /// P2-0/C-2: tiền đang CHỜ duyệt (mọi loại) — hiện riêng
     /// một dòng minh bạch, không trộn vào tổng chính thức.
     private func pendingSum(in items: [Receipt]) -> Int {
-        items.filter {
-            $0.status == .needsReview && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
+        items.pendingTotalCents()
     }
 
     /// P2-0 (mục nối duplicateOf): tập stableID đang bị ít

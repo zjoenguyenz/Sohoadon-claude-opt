@@ -24,18 +24,14 @@ struct HomeView: View {
     /// TRẢ (tổng in + tip). Trước gói này hero cộng cả tờ
     /// đang chờ duyệt và dùng totalCents trơn.
     private func yearSum(_ kind: Classification) -> Int {
-        currentYearReceipts.filter {
-            $0.classification == kind && $0.status == .reviewed
-                && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
+        // A7: luật chính thức một nguồn (OfficialReceiptRule).
+        currentYearReceipts.officialTotalCents(kind: kind)
     }
 
     /// P2-0/C-2: tiền chờ duyệt của năm nay — hiện một dòng
     /// riêng dưới thẻ hero, không trộn vào tổng chính thức.
     private var yearPendingTotal: Int {
-        currentYearReceipts.filter {
-            $0.status == .needsReview && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
+        currentYearReceipts.pendingTotalCents()
     }
 
     private var topCategories: [(name: String, kind: Classification, total: Int)] {
@@ -43,10 +39,10 @@ struct HomeView: View {
         // P2-0/C-2: chỉ tờ chính thức (đã duyệt, không loại
         // khỏi tổng), số đã trả.
         for receipt in currentYearReceipts
-        where receipt.status == .reviewed && !receipt.excludedFromTotals {
+        where receipt.isOfficialRecord {
             let key = receipt.category.isEmpty ? "Khác" : receipt.category
             let old = totals[key] ?? (receipt.classification, 0)
-            totals[key] = (receipt.classification, old.1 + (receipt.amountPaidCents ?? 0))
+            totals[key] = (receipt.classification, old.1 + receipt.countedAmountCents)
         }
         return totals
             .map { (name: $0.key, kind: $0.value.0, total: $0.value.1) }
@@ -341,17 +337,13 @@ struct ReportsView: View {
     /// P2-0/C-2: tổng Báo Cáo cũng là tổng CHÍNH THỨC —
     /// chỉ tờ đã duyệt, không loại khỏi tổng, số đã trả.
     private func sum(_ kind: Classification, in items: [Receipt]) -> Int {
-        items.filter {
-            $0.classification == kind && $0.status == .reviewed
-                && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
+        // A7: luật chính thức một nguồn (OfficialReceiptRule).
+        items.officialTotalCents(kind: kind)
     }
 
     /// P2-0/C-2: tiền chờ duyệt của năm đang xem.
     private var pendingTotal: Int {
-        yearReceipts.filter {
-            $0.status == .needsReview && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
+        yearReceipts.pendingTotalCents()
     }
 
     private var categoryRows: [(key: String, name: String, kind: Classification, total: Int, count: Int)] {
@@ -359,10 +351,10 @@ struct ReportsView: View {
         // P2-0/C-2: worksheet chỉ tính tờ chính thức.
         for receipt in yearReceipts
         where receipt.classification != .unknown
-            && receipt.status == .reviewed && !receipt.excludedFromTotals {
+            && receipt.isOfficialRecord {
             let key = "\(receipt.classificationRaw)|\(receipt.category.isEmpty ? "Khác" : receipt.category)"
             let old = grouped[key] ?? (receipt.classification, 0, 0)
-            grouped[key] = (receipt.classification, old.1 + (receipt.amountPaidCents ?? 0), old.2 + 1)
+            grouped[key] = (receipt.classification, old.1 + receipt.countedAmountCents, old.2 + 1)
         }
         return grouped
             // P2-0 mục 17 (§2.2(7)): id của hàng là KHOÁ
