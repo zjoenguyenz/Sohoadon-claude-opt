@@ -95,6 +95,9 @@ targets:
       - TaxSeed.swift
       - TaxSettings.swift
       - StoreProfiles.swift
+      # A10 (vòng 2): nét tiệm vượt v1 — lõi thuần (harness cũng
+      # biên dịch); chỉ GỢI Ý, JSON trong Application Support.
+      - StoreTraits.swift
       # --- Dữ liệu bundle của M7 (tiệm) + DomainCorrection ---
       - vendors.json
       - lexicon.json

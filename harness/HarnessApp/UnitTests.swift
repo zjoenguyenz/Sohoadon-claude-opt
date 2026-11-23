@@ -47,6 +47,7 @@ enum HarnessUnitTests {
         runRestorePlannerTests(check)
         runExportKitTests(check)
         runCostcoPDFVendorTests(check)
+        runStoreTraitsTests(check)
         return lines
     }
 
@@ -1896,5 +1897,45 @@ enum HarnessUnitTests {
         let named = read("COSTCO\nWHOLESALE\nTulsa #1207\n10220 S. Memorial Drive\n" + body)
         check("A4-05-co-ten-in-van-la-nac-1[src=\(named.vendorSource ?? "nil")]",
               named.vendor == "Costco" && named.vendorSource == "tier1-exact")
+    }
+
+    // MARK: - A10 (vòng 2): nét tiệm vượt v1 — CHỈ GỢI Ý
+
+    static func runStoreTraitsTests(_ check: (String, Bool) -> Void) {
+        let text = "COSTCO\nWHOLESALE\n1234567 MILK\n7654321 EGGS\nSUBTOTAL 100.00\nTAX 8.52\nTOTAL 108.52\nVISA"
+        let o = StoreTraits.observe(rawText: text, subtotalCents: 10000, taxCents: 852,
+                                    taxLabels: ["TAX "], category: "Groceries",
+                                    taxCategoryRaw: "food")
+        // 8 dòng; 2 dòng mở bằng >= 6 chữ số; TOTAL cuối ở dòng 6 -> 6*100/7.
+        check("ST01-quan-sat-tat-dinh[lines=\(o.lineCount) code=\(o.itemCodeLinePct) tot=\(o.totalLinePct.map(String.init) ?? "nil") rate=\(o.taxRatePer100k.map(String.init) ?? "nil")]",
+              o.lineCount == 8 && o.itemCodeLinePct == 25 && o.totalLinePct == 85
+              && o.taxRatePer100k == 8520 && o.taxLabels == ["TAX"])
+        // Một tờ chưa đủ làm "thói quen" -> không gợi ý.
+        let one = StoreTraits.merge(nil, o)
+        check("ST02-mot-to-chua-goi-y", StoreTraits.suggestions(one).isEmpty)
+        // Hai tờ -> có gợi ý, MỌI dòng mang nhãn "theo tiệm".
+        let two = StoreTraits.merge(one, o)
+        let sug = StoreTraits.suggestions(two)
+        check("ST03-moi-goi-y-mang-nhan-theo-tiem[n=\(sug.count)]",
+              !sug.isEmpty && sug.allSatisfy { $0.contains(StoreTraits.flag) })
+        check("ST04-suat-thue-hien-dung-8.520%",
+              sug.contains { $0.contains("8.520%") })
+        // Cửa sổ trượt giữ tối đa `window` quan sát số.
+        var many: StoreTraitsSummary? = nil
+        for _ in 0..<(StoreTraits.window + 5) { many = StoreTraits.merge(many, o) }
+        check("ST05-cua-so-truot[\(many?.ratesPer100k.count ?? -1)]",
+              many?.ratesPer100k.count == StoreTraits.window
+              && many?.observations == StoreTraits.window + 5)
+        // Thiếu tạm tính -> không bịa suất thuế.
+        let noSub = StoreTraits.observe(rawText: text, subtotalCents: nil, taxCents: 852,
+                                        taxLabels: [], category: nil, taxCategoryRaw: nil)
+        check("ST06-thieu-tam-tinh-khong-bia-suat", noSub.taxRatePer100k == nil)
+        // Bản tóm tắt nét tiệm giải mã được từ JSON đã lưu. (StoreProfile
+        // v1 nằm ở StoreProfiles.swift — chỉ target app — trường traits
+        // là Optional nên file v1 cũ không có khoá này vẫn giải mã; điều
+        // đó dựa trên giải mã tổng hợp của Swift, harness không kiểm.)
+        let decoded = try? JSONDecoder().decode(StoreTraitsSummary.self,
+                                                from: Data(#"{"observations":3,"lineCounts":[],"itemCodeLinePcts":[],"totalLinePcts":[],"ratesPer100k":[],"taxLabelCounts":{},"categoryCounts":{},"taxCategoryCounts":{}}"#.utf8))
+        check("ST07-tom-tat-giai-ma-duoc", decoded?.observations == 3)
     }
 }

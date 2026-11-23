@@ -18,6 +18,9 @@ struct StoreProfile: Codable, Equatable {
     var category: String? = nil       // TaxCategory.rawValue
     var approvedCount: Int = 0
     var lastSeenISO: String = ""
+    /// A10 (vòng 2): nét tiệm học thêm. Optional -> file hồ sơ v1 cũ
+    /// (không có khoá này) vẫn giải mã nguyên vẹn.
+    var traits: StoreTraitsSummary? = nil
 }
 
 enum StoreProfiles {
@@ -67,12 +70,17 @@ enum StoreProfiles {
 
     /// Học từ một tờ vừa được duyệt lưu. Giá trị nil KHÔNG xoá giá trị
     /// đã học (tờ thiếu ZIP không được làm mất ZIP của tiệm).
-    static func learn(key: String, zip: String?, category: TaxCategory?) {
+    static func learn(key: String, zip: String?, category: TaxCategory?,
+                      traits observation: StoreTraitObservation? = nil) {
         guard !key.isEmpty else { return }
         var profiles = load()
         var profile = profiles[key] ?? StoreProfile(key: key)
         if let zip { profile.zip = zip }
         if let category { profile.category = category.rawValue }
+        // A10: gộp nét tiệm của tờ vừa duyệt (chỉ dùng để GỢI Ý).
+        if let observation {
+            profile.traits = StoreTraits.merge(profile.traits, observation)
+        }
         profile.approvedCount += 1
         profile.lastSeenISO = ISO8601DateFormatter().string(from: Date())
         profiles[key] = profile
@@ -80,6 +88,15 @@ enum StoreProfiles {
         DiagLog.log(.read, "THUẾ: hồ sơ tiệm \(key) — đã duyệt "
             + "\(profile.approvedCount) tờ"
             + (profile.zip.map { " · ZIP \($0)" } ?? "")
-            + (profile.category.map { " · loại \($0)" } ?? ""))
+            + (profile.category.map { " · loại \($0)" } ?? "")
+            + (profile.traits.map { " · nét tiệm \($0.observations) tờ" } ?? ""))
+    }
+
+    /// A10: các dòng GỢI Ý theo tiệm cho màn Kiểm Lại — chỉ hiển
+    /// thị, không bao giờ đè số/chữ đọc trên giấy. Mỗi dòng mang
+    /// nhãn "theo tiệm".
+    static func suggestions(forKey key: String) -> [String] {
+        guard !key.isEmpty else { return [] }
+        return StoreTraits.suggestions(load()[key]?.traits)
     }
 }

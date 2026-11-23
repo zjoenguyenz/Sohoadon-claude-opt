@@ -1796,6 +1796,8 @@ struct ReviewView: View {
     /// Pha A không cần suất); hồ sơ tiệm chỉ học giá trị này, không
     /// học giá trị mặc định hiển thị của picker.
     @State private var landingAppliedCategory: TaxCategory? = nil
+    /// A10: gợi ý theo tiệm (chỉ hiển thị), nạp một lần khi mở màn.
+    @State private var storeSuggestions: [String] = []
     @State private var showDuplicateAlert = false
     @State private var duplicateCount = 0
     /// N2-FIX: kiểm tra trùng THẤT BẠI (fetch lỗi) — khác hẳn
@@ -2061,6 +2063,19 @@ struct ReviewView: View {
                     }
                 }
 
+                // A10: nét tiệm đã học từ các tờ anh DUYỆT của cùng
+                // tiệm — CHỈ GỢI Ý, không áp vào trường nào.
+                if !storeSuggestions.isEmpty {
+                    Section("Gợi ý theo tiệm (chưa áp dụng)") {
+                        ForEach(Array(storeSuggestions.enumerated()),
+                                id: \.offset) { _, line in
+                            Text(line)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 Section("Thông tin đọc được") {
                     TextField("Tiệm / Vendor", text: $vendorText)
                     DatePicker("Ngày", selection: $dateValue, displayedComponents: [.date, .hourAndMinute])
@@ -2290,7 +2305,14 @@ struct ReviewView: View {
             .dsListBackground()
             .navigationTitle("Kiểm Lại Hoá Đơn")
             .navigationBarTitleDisplayMode(.inline)
-            .onAppear { applySuggestionOnce() }
+            .onAppear {
+                applySuggestionOnce()
+                // A10: đọc hồ sơ tiệm một lần (file nhỏ, trên máy).
+                storeSuggestions = StoreProfiles.suggestions(
+                    forKey: TaxLanding.profileKey(
+                        vendorKey: draft.result.vendorKey,
+                        vendor: vendorText.trimmingCharacters(in: .whitespaces)))
+            }
             // G3 (luật bền hoá): MỌI thay đổi ở các ô sửa đều
             // lên lịch ghi lớp sửa dở vào bản chụp nháp — chốt
             // theo sự kiện rời rạc qua chống dội 0,6 giây yên
@@ -2841,13 +2863,22 @@ struct ReviewView: View {
         // địa chỉ đã lưu; loại hàng = loại đang chốt ở Kiểm Lại
         // (picker hạ cánh khi có hạ cánh, không thì phân loại từ
         // món đọc được; không chắc thì để trống, không bịa).
+        let learnedCategory = landingAppliedCategory
+            ?? TaxLanding.classifyCategory(items: draft.result.items)
         StoreProfiles.learn(
             key: TaxLanding.profileKey(
                 vendorKey: draft.result.vendorKey,
                 vendor: receipt.vendor),
             zip: TaxLanding.extractZIP(from: receipt.vendorAddress),
-            category: landingAppliedCategory
-                ?? TaxLanding.classifyCategory(items: draft.result.items))
+            category: learnedCategory,
+            // A10: nét tiệm từ ĐÚNG tờ anh vừa duyệt (số đã chốt).
+            traits: StoreTraits.observe(
+                rawText: draft.result.rawText,
+                subtotalCents: receipt.subtotalCents,
+                taxCents: receipt.taxCents,
+                taxLabels: draft.result.taxes.map(\.label),
+                category: receipt.category,
+                taxCategoryRaw: learnedCategory?.rawValue))
         onDone()
         // P2-1: gương thư mục Files chạy nền sau mỗi lần lưu
         // hoá đơn mới thành công (lớp phụ — không chặn luồng
