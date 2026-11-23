@@ -49,6 +49,7 @@ enum HarnessUnitTests {
         runCostcoPDFVendorTests(check)
         runStoreTraitsTests(check)
         runAuditTrailTests(check)
+        runReadinessTests(check)
         return lines
     }
 
@@ -1965,5 +1966,30 @@ enum HarnessUnitTests {
               old[3].value.contains("không có dấu thời điểm")
               && old[4].value == "không trường nào"
               && old.last?.value == "S1")
+    }
+
+    // MARK: - A12(iii) (vòng 2): cảnh báo sẵn sàng năm thuế
+
+    static func runReadinessTests(_ check: (String, Bool) -> Void) {
+        func r(_ id: String, kind: String, official: Bool, pending: Bool) -> ExportReceiptInput {
+            ExportReceiptInput(id: id, date: Date(timeIntervalSince1970: 0), reportYear: 2026,
+                               vendor: id, kindRaw: kind, kindNormalized: kind,
+                               isOfficial: official, isPending: pending, isNeedsReview: pending,
+                               category: "", scheduleCLine: nil, subtotalCents: nil, taxCents: nil,
+                               totalCents: 100, countedCents: 100, tipCents: nil, cardLast4: nil,
+                               businessPurpose: "", estimatedFields: [], provenanceKnown: true,
+                               originals: [])
+        }
+        let rows = [
+            r("ok-b", kind: "business", official: true, pending: false),
+            r("ok-p", kind: "personal", official: true, pending: false),
+            r("unk", kind: "unknown", official: true, pending: false),     // thiếu: chưa phân loại
+            r("pend", kind: "business", official: false, pending: true),   // thiếu: chờ duyệt
+            r("excl", kind: "unknown", official: false, pending: false),   // đã loại khỏi tổng: không tính
+        ]
+        check("RD01-dem-cho-duyet-cong-chua-phan-loai[\(TaxReportMath.readinessGapCount(rows))]",
+              TaxReportMath.readinessGapCount(rows) == 2)
+        check("RD02-du-sach-thi-0",
+              TaxReportMath.readinessGapCount(Array(rows.prefix(2))) == 0)
     }
 }

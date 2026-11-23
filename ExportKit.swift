@@ -507,6 +507,14 @@ enum TaxReportMath {
         return t
     }
 
+    /// A12(iii) (vòng 2, WP9 §4.13): số tờ còn THIẾU để năm thuế
+    /// "sẵn sàng" = tờ chờ duyệt (luật A7, không tính tờ đã loại khỏi
+    /// tổng) + tờ chính thức chưa phân loại Cá nhân/Business. Hai tập
+    /// rời nhau (chính thức ≠ chờ duyệt). Chỉ để CẢNH BÁO.
+    static func readinessGapCount(_ rows: [ExportReceiptInput]) -> Int {
+        rows.filter { $0.isPending || ($0.isOfficial && $0.kindNormalized == "unknown") }.count
+    }
+
     /// Đúng thuật toán categoryRows cũ của ReportsView: chỉ tờ chính
     /// thức, bỏ loại "unknown"; khoá "<classificationRaw>|<mục|Khác>";
     /// business lên trước, rồi tổng giảm dần.

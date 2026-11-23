@@ -354,6 +354,30 @@ struct ReportsView: View {
                     .pickerStyle(.segmented)
                 }
 
+                // A12(iii) (vòng 2, WP9 §4.13): cảnh báo sẵn sàng của
+                // năm thuế — CHỈ CẢNH BÁO, mở Hộp Chờ có sẵn.
+                let readinessGap = TaxReportMath.readinessGapCount(yearInputs)
+                if readinessGap > 0 {
+                    Section {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Năm \(String(selectedYear)) chưa sẵn sàng",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.headline)
+                                .foregroundStyle(DS.warning)
+                            Text("Còn \(readinessGap) tờ chưa phân loại / chờ duyệt — xuất hồ sơ bây giờ sẽ thiếu các tờ này.")
+                                .font(.callout)
+                            NavigationLink {
+                                ReceiptListView(onlyNeedsReview: true)
+                            } label: {
+                                Text("Mở Hộp Chờ")
+                                    .font(.callout.weight(.semibold))
+                                    .frame(minHeight: 44)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+
                 Section("Tổng năm \(String(selectedYear))") {
                     HStack {
                         Label("CÁ NHÂN", systemImage: "person.fill")
