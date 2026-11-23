@@ -880,10 +880,27 @@ struct ReceiptDetailView: View {
                             .font(.caption)
                     }
                     LabeledContent("Tính vào tổng", value: "Không — đã loại khỏi tổng")
+                    // A11(iv): so sánh hai tờ cạnh nhau — CHỈ XEM.
+                    NavigationLink {
+                        DuplicateCompareView(left: receipt, leftTitle: "Tờ này",
+                                             right: original, rightTitle: "Tờ gốc")
+                    } label: {
+                        Label("So sánh hai tờ cạnh nhau", systemImage: "rectangle.split.2x1")
+                    }
                 }
                 if !duplicateCopies.isEmpty {
                     LabeledContent("Bản trùng của tờ này",
                                    value: "\(duplicateCopies.count) bản — đã loại khỏi tổng")
+                    // A11(iv): mỗi bản trùng một lối so sánh — CHỈ XEM.
+                    ForEach(duplicateCopies) { copy in
+                        NavigationLink {
+                            DuplicateCompareView(left: receipt, leftTitle: "Tờ này",
+                                                 right: copy, rightTitle: "Bản trùng")
+                        } label: {
+                            Label("So sánh với bản trùng — \(copy.date.formatted(date: .abbreviated, time: .omitted))",
+                                  systemImage: "rectangle.split.2x1")
+                        }
+                    }
                 }
                 LabeledContent("Bản bộ đọc của app") {
                     Text(currentParserVersion).font(.caption).foregroundStyle(.secondary)
@@ -2908,5 +2925,67 @@ struct ReviewView: View {
         // lưu, không ném lỗi về màn Kiểm Lại).
         MirrorSync.requestSync(using: modelContext)
         DriveSync.requestSync(using: modelContext)
+    }
+}
+
+// MARK: - A11(iv) (vòng 2, WP8): so sánh hai tờ trùng cạnh nhau
+
+/// Màn CHỈ XEM: hai ảnh gốc cạnh nhau (mỗi bên 50% bề ngang, cao 220,
+/// bo 8 — DESIGN-AUDIT §4.7) + các trường chính của mỗi tờ. Không có
+/// nút gộp/xoá/giữ nào: quan hệ trùng vẫn đổi ở đúng chỗ cũ.
+struct DuplicateCompareView: View {
+    let left: Receipt
+    let leftTitle: String
+    let right: Receipt
+    let rightTitle: String
+
+    var body: some View {
+        ScrollView {
+            HStack(alignment: .top, spacing: 12) {
+                column(left, title: leftTitle)
+                column(right, title: rightTitle)
+            }
+            .padding()
+        }
+        .navigationTitle("So sánh hai tờ")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private func column(_ r: Receipt, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            Group {
+                if let name = r.allOriginalImageFileNames.first,
+                   let image = ImageStore.load(fileName: name) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    Image(systemName: "photo")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 220)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            Text(r.vendor.isEmpty ? "(Chưa rõ tiệm)" : r.vendor)
+                .font(.callout.weight(.semibold))
+            Text(r.date.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption)
+            Text(r.totalCents.map { formatMoney(cents: $0) } ?? "—")
+                .font(.callout.weight(.semibold))
+                .monospacedDigit()
+            if let last4 = r.cardLast4 {
+                Text("•• \(last4)").font(.caption).foregroundStyle(.secondary)
+            }
+            Text(r.status == .reviewed ? "Đã duyệt" : "Chờ duyệt")
+                .font(.caption).foregroundStyle(.secondary)
+            if r.excludedFromTotals {
+                Text("Đã loại khỏi tổng").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
