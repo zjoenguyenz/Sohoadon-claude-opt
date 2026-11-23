@@ -282,7 +282,8 @@ struct ImageRun {
 }
 
 /// A5 (vòng 2): các ca in vết nguồn gốc ở chế độ images (set 1).
-let traceCaseNames: Set<String> = ["25-exxon-1.jpg"]
+let traceCaseNames: Set<String> = ["25-exxon-1.jpg", "06-kroger-1.jpg",
+                                     "39-publix-4.jpg", "37-cvs-pharmacy-3.jpg"]
 
 func printCaseTrace(name: String, run: ImageRun) {
     let lines = run.outcome.diagnostics.assembly.lines
