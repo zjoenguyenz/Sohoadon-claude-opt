@@ -1076,6 +1076,12 @@ case "roigate":
         .sorted { $0.lastPathComponent < $1.lastPathComponent }
     if jpgs.isEmpty { fail("không có .jpg trong \(dirPath)") }
     let legacyEngine = ClassicTextEngine()
+    // A9 / FL-314 (sửa THƯỚC, không sửa app): mỗi làn đọc ít nhất
+    // 2 lượt (--passes N, tối thiểu 2) và CHẤM LƯỢT TỆ NHẤT của làn
+    // đó — một lượt đọc may mắn của làn nào cũng không còn quyết
+    // định deltaOK.
+    let passes = max(2, Int(argValue("--passes") ?? "") ?? 2)
+    print("[roigate] passes=\(passes) (chấm lượt tệ nhất mỗi làn)")
     var deficitCases = 0
     var roiAssertFailures = 0
     var regressions = 0
@@ -1097,6 +1103,25 @@ case "roigate":
         } else { deficit += 100_000 }
         return ((ev.e1 ? 1 : 0) + (ev.e2 ? 1 : 0), deficit)
     }
+    // A9 / FL-316: tờ KHÔNG in tạm tính (GT subtotal = null) — thước
+    // thâm hụt ở trên cộng phạt phẳng 200_000 cho làn đọc ĐÚNG là
+    // "không có tạm tính", trong khi làn bịa ra tạm tính lại được
+    // điểm tốt hơn. Ca loại này chấm bằng SO TỪNG TRƯỜNG với GT:
+    // tạm tính (phải nil), tổng, danh sách thuế — số trường đúng.
+    func fieldScore(_ p: ParseResult, gt: [String: Any]) -> Int {
+        var score = 0
+        if p.subtotalCents == nil { score += 1 }
+        if let t = gt["total"] as? Int, p.totalCents == t { score += 1 }
+        if gt["total"] is NSNull, p.totalCents == nil { score += 1 }
+        let gtTaxes = ((gt["taxes"] as? [Int]) ?? []).sorted()
+        if p.taxes.map({ $0.amountCents }).sorted() == gtTaxes { score += 1 }
+        return score
+    }
+    // Lượt tệ nhất: ít đẳng thức khép nhất, rồi thâm hụt lớn nhất.
+    func worst(_ a: (closed: Int, deficit: Int), _ b: (closed: Int, deficit: Int))
+        -> Bool {
+        a.closed < b.closed || (a.closed == b.closed && a.deficit > b.deficit)
+    }
     for url in jpgs {
         let name = url.lastPathComponent
         guard let cg = loadCGImage(url) else {
@@ -1104,36 +1129,65 @@ case "roigate":
             regressions += 1
             continue
         }
-        // Làn CŨ: đúng thân runImage trước G5.
-        var legacyParsed = ParseResult()
-        var legacyAssembly = AssemblyResult(lines: [], dedupeDropped: [],
-                                            invariantViolations: 0)
-        if let frags = try? legacyEngine.recognize(in: cg, region: nil) {
-            legacyAssembly = LineAssembly.assemble(frags)
-            let lines = legacyAssembly.lines.map {
-                OCRLine(text: $0.text, confidence: $0.confidence)
+        // Làn CŨ: đúng thân runImage trước G5 — chạy `passes` lượt,
+        // giữ lượt TỆ NHẤT.
+        var legacy: (closed: Int, deficit: Int)? = nil
+        var legacyField = Int.max
+        for _ in 0..<passes {
+            var legacyParsed = ParseResult()
+            var legacyAssembly = AssemblyResult(lines: [], dedupeDropped: [],
+                                                invariantViolations: 0)
+            if let frags = try? legacyEngine.recognize(in: cg, region: nil) {
+                legacyAssembly = LineAssembly.assemble(frags)
+                let lines = legacyAssembly.lines.map {
+                    OCRLine(text: $0.text, confidence: $0.confidence)
+                }
+                let boxes: [CGRect?] = legacyAssembly.lines.map { $0.box }
+                legacyParsed = ReceiptParser.parse(lines: lines, boxes: boxes)
             }
-            let boxes: [CGRect?] = legacyAssembly.lines.map { $0.box }
-            legacyParsed = ReceiptParser.parse(lines: lines, boxes: boxes)
+            let m = laneMetric(legacyParsed, legacyAssembly)
+            if legacy == nil || worst(m, legacy!) { legacy = m }
+            if let gt = gtCases[name] as? [String: Any] {
+                legacyField = min(legacyField, fieldScore(legacyParsed, gt: gt))
+            }
         }
-        let legacy = laneMetric(legacyParsed, legacyAssembly)
-        // Làn APP: trọn đường ReceiptReader.
-        let app = runImage(cg)
-        let appMetric = laneMetric(app.parsed, app.assembly)
-        let roiRounds = app.outcome.diagnostics.roiRounds.count
+        // Làn APP: trọn đường ReceiptReader — `passes` lượt, giữ lượt
+        // TỆ NHẤT (kèm số vòng ROI của chính lượt đó).
+        var appMetric: (closed: Int, deficit: Int)? = nil
+        var appField = Int.max
+        var roiRounds = 0
+        for _ in 0..<passes {
+            let app = runImage(cg)
+            let m = laneMetric(app.parsed, app.assembly)
+            if appMetric == nil || worst(m, appMetric!) {
+                appMetric = m
+                roiRounds = app.outcome.diagnostics.roiRounds.count
+            }
+            if let gt = gtCases[name] as? [String: Any] {
+                appField = min(appField, fieldScore(app.parsed, gt: gt))
+            }
+        }
+        let legacyW = legacy!, appW = appMetric!
         let isF2 = roiF2Files.contains(name)
         let hasGT = gtCases[name] != nil
+        let gtNoSubtotal = (gtCases[name] as? [String: Any])?["subtotal"] is NSNull
         var deltaOK = true
-        if appMetric.closed < legacy.closed
-            || (appMetric.closed == legacy.closed
-                && appMetric.deficit > legacy.deficit) {
+        if gtNoSubtotal {
+            // FL-316: chấm theo từng trường với GT (lượt tệ nhất).
+            if appField < legacyField {
+                deltaOK = false
+                regressions += 1
+            }
+        } else if appW.closed < legacyW.closed
+            || (appW.closed == legacyW.closed
+                && appW.deficit > legacyW.deficit) {
             deltaOK = false
             regressions += 1
         }
         var roiAssert = "na"
-        if legacy.closed < 2 {
+        if legacyW.closed < 2 {
             deficitCases += 1
-            if appMetric.closed == 2 {
+            if appW.closed == 2 {
                 roiAssert = "rescued"
                 if isF2 { f2Rescued += 1 }
             } else if roiRounds > 0 {
@@ -1144,9 +1198,11 @@ case "roigate":
             }
         }
         print("ROIGATE-CASE file=\(name) gt=\(hasGT ? "yes" : "no") f2=\(isF2 ? "yes" : "no") "
-            + "legacyClosed=\(legacy.closed) legacyDeficit=\(legacy.deficit) "
-            + "appClosed=\(appMetric.closed) appDeficit=\(appMetric.deficit) "
-            + "roiRounds=\(roiRounds) roiAssert=\(roiAssert) deltaOK=\(deltaOK)")
+            + "legacyClosed=\(legacyW.closed) legacyDeficit=\(legacyW.deficit) "
+            + "appClosed=\(appW.closed) appDeficit=\(appW.deficit) "
+            + "roiRounds=\(roiRounds) roiAssert=\(roiAssert) deltaOK=\(deltaOK) "
+            + "passes=\(passes) scoring=\(gtNoSubtotal ? "fields" : "deficit")"
+            + (gtNoSubtotal ? " legacyFields=\(legacyField) appFields=\(appField)" : ""))
     }
     print("ROIGATE-DONE cases=\(jpgs.count) deficitCases=\(deficitCases) "
         + "roiAssertFailures=\(roiAssertFailures) f2Rescued=\(f2Rescued) regressions=\(regressions)")
