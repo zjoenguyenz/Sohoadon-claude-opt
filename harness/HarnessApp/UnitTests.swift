@@ -44,6 +44,7 @@ enum HarnessUnitTests {
         runTaxLandingTests(check)
         runOfficialRuleTests(check)
         runRetentionPolicyTests(check)
+        runRestorePlannerTests(check)
         return lines
     }
 
@@ -1600,5 +1601,62 @@ enum HarnessUnitTests {
               RetentionPolicy.reachesHorizon(retentionUntil: past, now: now)
               && RetentionPolicy.reachesHorizon(retentionUntil: soon, now: now)
               && !RetentionPolicy.reachesHorizon(retentionUntil: far, now: now))
+    }
+
+    // MARK: - A1: planner khôi phục Drive
+    private static func runRestorePlannerTests(_ check: (String, Bool) -> Void) {
+        func e(_ id: String, _ status: String = "active", _ hash: String = "h1",
+               folder: Bool = true, deleted: Bool = false) -> RestoreRemoteEntry {
+            RestoreRemoteEntry(id: id, status: status, contentHash: hash,
+                               hasReceiptFolder: folder, inDeletedFolder: deleted)
+        }
+        check("RS01-chua-co-tren-may-thi-khoi-phuc",
+              RestorePlanner.decide(e("a"), localHashes: [:]) == .restore)
+        check("RS02-cung-hash-bo-qua-idempotent",
+              RestorePlanner.decide(e("a"), localHashes: ["a": "h1"]) == .alreadyPresent)
+        check("RS03-khac-hash-la-xung-dot-khong-ghi-de",
+              RestorePlanner.decide(e("a"), localHashes: ["a": "h9"])
+                == .conflict(localHash: "h9", remoteHash: "h1"))
+        check("RS04-manifest-deleted-khong-ve",
+              RestorePlanner.decide(e("a", "deleted"), localHashes: [:]) == .skipDeleted)
+        check("RS05-thu-muc-o-_deleted-khong-ve",
+              RestorePlanner.decide(e("a", deleted: true), localHashes: [:]) == .skipDeleted)
+        check("RS06-mat-thu-muc-to",
+              RestorePlanner.decide(e("a", folder: false), localHashes: [:]) == .skipNoFolder)
+        // Idempotent hai lượt: lượt 1 khôi phục -> máy có hash -> lượt 2 bỏ qua hết.
+        let entries = [e("a"), e("b", hash: "h2"), e("c", "deleted")]
+        let pass1 = entries.map { RestorePlanner.decide($0, localHashes: [:]) }
+        var local: [String: String] = [:]
+        for (en, d) in zip(entries, pass1) where d == .restore { local[en.id] = en.contentHash }
+        let pass2 = entries.map { RestorePlanner.decide($0, localHashes: local) }
+        check("RS07-chay-hai-lan-khong-sinh-ban-trung",
+              pass1.filter { $0 == .restore }.count == 2
+              && pass2.filter { $0 == .restore }.isEmpty)
+        check("RS08-manifest-trung-id-giu-muc-cuoi",
+              RestorePlanner.dedupeLastWins([e("a", hash: "old"), e("b"), e("a", hash: "new")])
+                .map { $0.contentHash } == ["new", "h1"])
+        check("RS09-file-dich-khac-byte-la-xung-dot",
+              RestorePlanner.fileDecision(localSHA256: "x", downloadedSHA256: "y") == .conflict
+              && RestorePlanner.fileDecision(localSHA256: "y", downloadedSHA256: "y") == .reuseIdentical
+              && RestorePlanner.fileDecision(localSHA256: nil, downloadedSHA256: "y") == .write)
+        check("RS10-ten-file-khong-an-toan-bi-tu-choi",
+              RestorePlanner.isSafeFileName("A1B2.jpg")
+              && !RestorePlanner.isSafeFileName("../x.jpg")
+              && !RestorePlanner.isSafeFileName("a/b.jpg")
+              && !RestorePlanner.isSafeFileName("")
+              && !RestorePlanner.isSafeFileName(".hidden"))
+        check("RS11-kiem-byte-tai-ve",
+              RestorePlanner.downloadVerified(byteCount: 10, expectedMD5: "AB",
+                                              actualCount: 10, actualMD5: "ab")
+              && !RestorePlanner.downloadVerified(byteCount: 10, expectedMD5: nil,
+                                                  actualCount: 9, actualMD5: "ab")
+              && !RestorePlanner.downloadVerified(byteCount: nil, expectedMD5: "ab",
+                                                  actualCount: 9, actualMD5: "cd")
+              && !RestorePlanner.downloadVerified(byteCount: nil, expectedMD5: nil,
+                                                  actualCount: 9, actualMD5: "cd"))
+        let tally = RestoreTally.byYear([(2025, 100), (2026, 250), (2025, nil), (2026, 1)])
+        check("RS12-tong-theo-nam",
+              tally == [RestoreYearLine(year: 2025, count: 2, totalCents: 100),
+                        RestoreYearLine(year: 2026, count: 2, totalCents: 251)])
     }
 }

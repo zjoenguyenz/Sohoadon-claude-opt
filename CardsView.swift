@@ -202,6 +202,9 @@ struct CardsView: View {
                     Text("Mỗi hoá đơn (ảnh gốc + dữ kiện) được app tự đồng bộ vào thư mục GL-Keeper trong Google Drive của anh — đồng bộ khi mở app và ngay sau mỗi thay đổi. Đăng nhập một lần; app chỉ thấy file do chính nó tạo, không thấy phần Drive còn lại. Xoá hoá đơn trên máy thì bản Drive được CHUYỂN vào thư mục _deleted trên Drive, không biến mất.")
                 }
 
+                // A1 (vòng 2): đường kéo về từ Drive (chỉ đọc Drive).
+                DriveRestoreSection()
+
                 // P2-1 (§2.2): gương thư mục Files — lớp sao
                 // lưu PHỤ. Kho trên máy vẫn là gốc; gương lỗi
                 // chỉ hiện ở mục này, không chặn việc lưu.

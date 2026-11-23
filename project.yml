@@ -55,6 +55,10 @@ targets:
       # gương. Chỉ target chính như MirrorSync — bench không
       # có tầng model/UI nên không liên kết file này.
       - DriveSync.swift
+      # A1 (vòng 2): đường kéo về từ Drive — planner thuần (harness
+      # cũng biên dịch) + engine/màn hình (chỉ target app).
+      - RestorePlanner.swift
+      - DriveRestore.swift
       # L-2026-11-20-42: bảo vệ ảnh gốc — kho an toàn ở
       # Application Support/OriginalVault + kiểm kê mỗi lần
       # mở app (planner thuần vào harness như ReceiptLogic;
