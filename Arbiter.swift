@@ -278,13 +278,6 @@ enum TotalsArbiter {
         var solutions: [Solution] = []
         var seenKeys = Set<String>()
         var trials = 0
-        // FL-299 (vòng 3): xem positionCountsAsTaxEvidence.
-        let taxByPositionAllowed = TotalsArbiter.positionCountsAsTaxEvidence(
-            labels: labels, rates: rates, windowStart: wStart,
-            subAnchorCount: subAnchors.count, totAnchorCount: totAnchors.count)
-        if !taxByPositionAllowed {
-            out.trace.append("tax-by-position=off (không nhãn/suất thuế in, không mỏ neo nhãn)")
-        }
 
         pairLoop: for (sTok, tTok) in pairs {
             guard let need = SafeMoney.checkedSubtract(tTok.cents, sTok.cents),
@@ -303,8 +296,7 @@ enum TotalsArbiter {
                     && (labels[$0.lineIndex].family == "TAX"
                         || taxFallbackIDs.contains($0.id)
                         || CandidateFactory.rateSupported(lineIndex: $0.lineIndex, rates: rates)
-                        || (taxByPositionAllowed
-                            && lo <= $0.lineIndex && $0.lineIndex <= hi))
+                        || (lo <= $0.lineIndex && $0.lineIndex <= hi))
             }.sorted { $0.lineIndex < $1.lineIndex }
             if pool.count > maxWindowCandidatesPerRole {
                 budgetHit = true
@@ -789,32 +781,6 @@ enum TotalsArbiter {
         return editDistanceIsOne(lead, "SUBTOTAL")
     }
 
-    /// FL-299 (vòng 3): luật "nằm giữa hai mỏ neo" có còn là bằng
-    /// chứng thuế không. TẮT chỉ khi ĐỒNG THỜI cả ba:
-    ///   (1) cả tờ không có dòng họ TAX/TAXSUM nào (kể cả ngoài cửa
-    ///       sổ khối tổng, kể cả dòng chỉ-nhãn);
-    ///   (2) không có % in trên dòng nào của cửa sổ;
-    ///   (3) khối tổng không có mỏ neo nhãn nào (subAnchors = 0 VÀ
-    ///       totAnchors = 0) — hai đầu "mỏ neo" đều là số đoán từ bể,
-    ///       nên "nằm giữa" không đo được gì.
-    /// Đo bằng trace trên bộ dòng cuối (lượt 45221693993):
-    ///   25-exxon-1  — (1) không nhãn, (2) % chỉ ở dòng 4–9 < cửa sổ 10,
-    ///                 (3) 0/0 -> TẮT: tiền rửa xe 7.00 hết thành thuế.
-    ///   06-kroger-1 — "TAX 0.49" ở dòng 15 (trước cửa sổ 19) -> BẬT,
-    ///                 giữ nguyên (bản vòng 2 chỉ nhìn cửa sổ nên hỏng).
-    ///   39-publix-4 — mỏ neo nhãn 1/1 -> BẬT, giữ "chưa khép + cờ".
-    ///   37-cvs-pharmacy-3 — mỏ neo 0/1 -> BẬT; bể vị trí vốn rỗng.
-    static func positionCountsAsTaxEvidence(labels: [LineLabel],
-                                            rates: [RateCandidate],
-                                            windowStart: Int,
-                                            subAnchorCount: Int,
-                                            totAnchorCount: Int) -> Bool {
-        let taxLabelAnywhere = labels.contains { $0.family == "TAX" || $0.family == "TAXSUM" }
-        let rateInWindow = rates.contains { $0.lineIndex >= max(0, windowStart) }
-        let labelAnchors = subAnchorCount + totAnchorCount > 0
-        return taxLabelAnywhere || rateInWindow || labelAnchors
-    }
-
     /// Hai chuỗi lệch nhau đúng MỘT phép sửa (thay một ký tự,
     /// hoặc thêm/bớt một ký tự) hay không.
     private static func editDistanceIsOne(_ a: String, _ b: String) -> Bool {
@@ -925,11 +891,6 @@ enum TotalsArbiter {
         // kê là MỘT — hai lượt chỉ khác hồ đưa vào. Ngân
         // sách §3.3 dùng CHUNG (evaluations/trials đếm tiếp
         // ở hàm ngoài); chạm ngân sách trả nil.
-        // FL-299 (vòng 3): cùng luật như lượt chính, trên mỏ neo của
-        // tập token gộp của lượt cứu.
-        let taxByPositionAllowed = TotalsArbiter.positionCountsAsTaxEvidence(
-            labels: labels, rates: rates, windowStart: wStart,
-            subAnchorCount: subAnchors.count, totAnchorCount: totAnchors.count)
         func enumerateSolutions(_ tokens: [MoneyCandidate]) -> [Solution]? {
             let win = tokens.filter { $0.lineIndex >= wStart }
             let winPrim = tokens.filter {
@@ -989,8 +950,7 @@ enum TotalsArbiter {
                         && $0.cents > 0
                         && (labels[$0.lineIndex].family == "TAX"
                             || CandidateFactory.rateSupported(lineIndex: $0.lineIndex, rates: rates)
-                            || (taxByPositionAllowed
-                                && lo <= $0.lineIndex && $0.lineIndex <= hi))
+                            || (lo <= $0.lineIndex && $0.lineIndex <= hi))
                 }.sorted { a, b in
                     if (a.tier == "primary") != (b.tier == "primary") {
                         return a.tier == "primary"
