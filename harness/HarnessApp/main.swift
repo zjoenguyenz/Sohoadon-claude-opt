@@ -314,6 +314,100 @@ func printCaseTrace(name: String, run: ImageRun) {
     print("TRACE-CASE \(name) END")
 }
 
+// MARK: - Vòng 3 Phần 1: trục phân biệt Exxon / Kroger (CHỈ ĐO)
+
+/// Nguồn nhận của một dòng thuế cuối, suy từ CHÍNH bộ dòng cuối của
+/// parse bằng các hàm công khai của lõi (CandidateFactory) — không
+/// gọi vào nội bộ Arbiter.
+func taxSource(_ t: ParsedTaxLine, labels: [LineLabel],
+               rates: [RateCandidate]) -> String {
+    guard let li = t.lineIndex, li >= 0, li < labels.count else {
+        return t.label.contains("ước tính") ? "landing-estimate" : "no-line"
+    }
+    if labels[li].family == "TAX" { return "label-TAX" }
+    if labels[li].family == "TAXSUM" { return "label-TAXSUM" }
+    if CandidateFactory.rateSupported(lineIndex: li, rates: rates) { return "printed-rate" }
+    return "POSITION-ONLY"
+}
+
+func finalLines(_ p: ParseResult) -> [OCRLine] {
+    p.rawText.components(separatedBy: "\n").map { OCRLine(text: $0, confidence: 0.9) }
+}
+
+func printTaxSourceLine(name: String, run: ImageRun) {
+    let p = run.parsed
+    let lines = finalLines(p)
+    let (_, rates, labels) = CandidateFactory.generate(lines: lines)
+    let srcs = p.taxes.map { "\($0.amountCents)@\($0.lineIndex.map(String.init) ?? "nil"):"
+        + taxSource($0, labels: labels, rates: rates) }
+    let posOnly = p.taxes.contains { taxSource($0, labels: labels, rates: rates) == "POSITION-ONLY" }
+    print("TAXSRC \(name) arb=\(p.arbiterStatus ?? "nil") e1=\(run.e1) e2=\(run.e2) "
+        + "taxes=[\(srcs.joined(separator: ","))] positionOnly=\(posOnly ? "YES" : "no") "
+        + "fl299Flag=\(p.warnings.contains { $0.contains("chỉ suy từ VỊ TRÍ") } ? "YES" : "no")")
+}
+
+func printAxisTrace(name: String, run: ImageRun) {
+    let p = run.parsed
+    let lines = finalLines(p)
+    let (money, rates, labels) = CandidateFactory.generate(lines: lines)
+    let winStart = p.selectionTrace.compactMap { s -> Int? in
+        guard let r = s.range(of: "window-start=") else { return nil }
+        return Int(s[r.upperBound...].prefix { $0.isNumber })
+    }.first
+    // (A) nhãn thuế in: ở đâu so với cửa sổ khối tổng.
+    let taxLabelLines = labels.indices.filter { labels[$0].family == "TAX" || labels[$0].family == "TAXSUM" }
+    let inWin = taxLabelLines.filter { l in winStart.map { l >= $0 } ?? false }
+    print("AXIS-A \(name) windowStart=\(winStart.map(String.init) ?? "nil") "
+        + "taxLabelLines=\(taxLabelLines) inWindow=\(inWin) beforeWindow=\(taxLabelLines.filter { !inWin.contains($0) }) "
+        + "rateLines=\(rates.map { "\($0.lineIndex):\($0.text)" })")
+    // (B) % suy ra = thuế / tạm tính; đối chiếu bảng DUY NHẤT trong repo
+    // (TaxSeed — vùng Tulsa, OK). Ngoài OK: repo không có bảng -> không
+    // kết luận được.
+    let seedRates = Set(TaxTable.seed.portions.map {
+        Int((($0.statePct + $0.countyPct + $0.cityPct) * 1000).rounded()) })
+    if let sub = p.subtotalCents, sub > 0, p.taxTotalCents > 0 {
+        let per100k = Int((Double(p.taxTotalCents) * 100_000 / Double(sub)).rounded())
+        // khớp nếu thuế làm tròn của sub ở một suất seed == thuế đọc
+        let match = TaxTable.seed.portions.contains { pt in
+            let r = pt.statePct + pt.countyPct + pt.cityPct
+            return Int((Double(sub) * r / 100).rounded()) == p.taxTotalCents
+        }
+        print("AXIS-B \(name) impliedRate=\(String(format: "%.3f", Double(per100k) / 1000))% "
+            + "matchesTulsaSeedRateToTheCent=\(match ? "yes" : "no") seedRatesPct=\(seedRates.sorted().map { String(format: "%.3f", Double($0) / 1000) })")
+    } else {
+        print("AXIS-B \(name) impliedRate=n/a (sub=\(p.subtotalCents.map(String.init) ?? "nil") tax=\(p.taxTotalCents))")
+    }
+    // (C) phản thực: bỏ token thuế CHỈ-VỊ-TRÍ khỏi bộ dòng cuối, chạy lại
+    // arbiter — còn nghiệm nào khép không, khép ra số gì.
+    let base = TotalsArbiter.arbitrate(lines: lines, itemsSumCents: nil)
+    print("AXIS-C \(name) asIs status=\(base.status) sub=\(base.subtotalCents.map(String.init) ?? "nil") "
+        + "taxes=\(base.taxes.map { $0.amountCents }) total=\(base.totalCents.map(String.init) ?? "nil") "
+        + "trace=\(base.trace.joined(separator: " | "))")
+    // ứng viên thuế trong cửa sổ không có nhãn/% (cái mà luật vị trí có thể nhận)
+    let posCands = money.filter { m in
+        guard let w = winStart, m.lineIndex >= w, m.feasibleRoles.contains("tax") else { return false }
+        return labels[m.lineIndex].family != "TAX" && labels[m.lineIndex].family != "TAXSUM"
+            && !CandidateFactory.rateSupported(lineIndex: m.lineIndex, rates: rates)
+    }
+    print("AXIS-C \(name) positionalTaxFeasibleInWindow=\(posCands.map { "\($0.cents)@\($0.lineIndex)" })")
+    for m in posCands {
+        var cut = lines
+        cut[m.lineIndex] = OCRLine(text: "", confidence: 0.9)
+        let r = TotalsArbiter.arbitrate(lines: cut, itemsSumCents: nil)
+        print("AXIS-C \(name) without \(m.cents)@\(m.lineIndex): status=\(r.status) "
+            + "sub=\(r.subtotalCents.map(String.init) ?? "nil") taxes=\(r.taxes.map { $0.amountCents }) "
+            + "total=\(r.totalCents.map(String.init) ?? "nil")")
+    }
+    // (D) hàng/khoảng cách: dòng của thuế cuối so với dòng tổng cuối.
+    let totalLine = money.first { $0.cents == p.totalCents && $0.lineIndex >= (winStart ?? 0) }?.lineIndex
+    for t in p.taxes {
+        let d = (t.lineIndex ?? -1) - (totalLine ?? -1)
+        print("AXIS-D \(name) tax=\(t.amountCents)@\(t.lineIndex.map(String.init) ?? "nil") "
+            + "totalLine=\(totalLine.map(String.init) ?? "nil") rowsFromTotal=\(t.lineIndex == nil || totalLine == nil ? "n/a" : String(d)) "
+            + "taxLineText=\(t.lineIndex.flatMap { $0 < lines.count ? lines[$0].text : nil } ?? "-")")
+    }
+}
+
 func runImage(_ cg: CGImage) -> ImageRun {
     let outcome = ReceiptReader.read(ReadRequest(
         source: .photoLibrary,
@@ -1074,6 +1168,13 @@ case "images":
             // Chỉ IN; không đổi phán quyết nào của cổng.
             if set == 1, traceCaseNames.contains(url.lastPathComponent) {
                 printCaseTrace(name: url.lastPathComponent, run: run)
+                printAxisTrace(name: url.lastPathComponent, run: run)
+            }
+            // Vòng 3 Phần 1 (CHỈ ĐO): mọi ca, lượt 1 — nguồn nhận của
+            // từng dòng thuế cuối (nhãn TAX / TAXSUM / % in / ước tính /
+            // CHỈ VỊ TRÍ). Không đổi phán quyết nào.
+            if set == 1 {
+                printTaxSourceLine(name: url.lastPathComponent, run: run)
             }
             okCount += 1
         }

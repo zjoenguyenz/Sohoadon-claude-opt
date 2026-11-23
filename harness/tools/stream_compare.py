@@ -24,6 +24,22 @@ after ROI), so the two runs are always compared at the same stage. Score = the w
 (`candidates[winner].score`, i.e. scoreTotal) when recorded, else the
 driver's top-level `score`.
 
+Round 3 / Phase 0 additions (tooling only, appended to the report,
+default output above them unchanged):
+  * READ lines: per case, the FULL final read string of the winner
+    (`parse`: vendor, subtotal, tax, total, items, sumItems, sold, card,
+    warnings) in both runs and whether ANY of those fields changed —
+    "kết quả đọc", not only class + totals.
+  * CAND lines: EVERY candidate of every case in both runs — kind,
+    transform, gate, winner, score, fragments, lines, the non-zero
+    scoreComponents, and a parse summary DERIVED from scoreComponents
+    (which equations closed: e1/e2/e3; has subtotal/total/tax line/
+    date/vendor). Losing candidates carry no stored ParseResult in the
+    app's diagnostics, so their cent values are not available; the
+    derived summary is exactly what the app scored.
+  * EVIDENCE lines per case: the evidence-richest candidate (most
+    evidence flags, tie -> more fragments) vs the winner.
+
 Stdlib only. Usage:
   python3 stream_compare.py RUN_A_DIR RUN_B_DIR
           [--label-a A] [--label-b B] [--focus CASE ...] [--json OUT]
@@ -105,6 +121,8 @@ def winner_view(dump):
         score = dump.get("score")
 
     return {
+        "read": dump.get("parse") or "",
+        "cands": [_cand_view(c) for c in candidates],
         "class": cls,
         "subtotalCents": summary.get("subtotalCents"),
         "taxCents": summary.get("taxCents"),
@@ -114,6 +132,86 @@ def winner_view(dump):
         "candidates": len(candidates),
         "source": source,
     }
+
+
+EVIDENCE_KEYS = ("e1ExactClosure", "e2Within2c", "e3ItemCount", "hasSubtotal",
+                 "hasTotal", "hasTaxLine", "hasDate", "vendorResolved")
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _cand_view(c):
+    comps = c.get("scoreComponents") or {}
+    flags = {k: _num(comps.get(k)) > 0 for k in EVIDENCE_KEYS}
+    return {
+        "kind": c.get("kind"), "transform": c.get("transform"),
+        "gate": c.get("gate"), "winner": c.get("winner") in (1, True),
+        "score": c.get("score"), "fragments": c.get("fragments"),
+        "lines": c.get("lines"),
+        "components": {k: comps[k] for k in sorted(comps) if _num(comps[k]) != 0},
+        "componentsSource": c.get("scoreComponentsSource", "n/a"),
+        "flags": flags,
+        "evidence": sum(1 for v in flags.values() if v),
+    }
+
+
+def _cand_line(case, label, idx, cv):
+    f = cv["flags"]
+    derived = (f"e1={'Y' if f['e1ExactClosure'] else 'n'} "
+               f"e2={'Y' if f['e2Within2c'] else 'n'} "
+               f"e3={'Y' if f['e3ItemCount'] else 'n'} "
+               f"sub={'Y' if f['hasSubtotal'] else 'n'} "
+               f"tot={'Y' if f['hasTotal'] else 'n'} "
+               f"tax={'Y' if f['hasTaxLine'] else 'n'} "
+               f"date={'Y' if f['hasDate'] else 'n'} "
+               f"vendor={'Y' if f['vendorResolved'] else 'n'}")
+    comps = " ".join(f"{k}={_num(v):.3f}" for k, v in cv["components"].items())
+    return (f"CAND {case} {label} #{idx} kind={cv['kind']} "
+            f"winner={'YES' if cv['winner'] else 'no'} score={_score(cv['score'])} "
+            f"gate={cv['gate'] or '-'} frags={cv['fragments']} lines={cv['lines']} "
+            f"evidence={cv['evidence']}/8 [{derived}] "
+            f"components({cv['componentsSource']}): {comps or '(none)'}")
+
+
+def render_detail(rows, label_a, label_b):
+    out = ["# READ: full final read string of the winner, both runs"]
+    read_changed = []
+    for r in rows:
+        if r["status"] != "both":
+            continue
+        ra, rb = r["a"]["read"], r["b"]["read"]
+        same = ra == rb
+        if not same:
+            read_changed.append(r["case"])
+        out.append(f"READ {r['case']}: {'không đổi' if same else 'ĐỔI'} | "
+                   f"{label_a}: {ra} | {label_b}: {rb}")
+    out.append(f"READ-SUMMARY changed={len(read_changed)} "
+               f"cases={','.join(read_changed) or '-'}")
+    out.append("# CAND: every candidate; summary derived from scoreComponents")
+    for r in rows:
+        for label, key in ((label_a, "a"), (label_b, "b")):
+            v = r[key]
+            if v is None:
+                continue
+            for i, cv in enumerate(v["cands"]):
+                out.append(_cand_line(r["case"], label, i, cv))
+            if v["cands"]:
+                rich = max(range(len(v["cands"])),
+                           key=lambda i: (v["cands"][i]["evidence"],
+                                          v["cands"][i]["fragments"] or 0))
+                win = next((i for i, c in enumerate(v["cands"]) if c["winner"]), None)
+                out.append(f"EVIDENCE {r['case']} {label} richest=#{rich} "
+                           f"({v['cands'][rich]['kind']}, {v['cands'][rich]['evidence']}/8) "
+                           f"winner=#{win if win is not None else '-'}"
+                           + (f" ({v['cands'][win]['kind']}, {v['cands'][win]['evidence']}/8)"
+                              if win is not None else "")
+                           + (" SAME" if win == rich else " DIFFERENT"))
+    return out
 
 
 def _die(msg):
@@ -222,6 +320,7 @@ def render(rows, label_a, label_b, focus, coverage=None):
                 f"FOCUS {name}: class {r['a']['class']} -> "
                 f"{r['b']['class']} ({'changed' if r['classChanged'] else 'same'})"
                 f", {label_b} closed={'yes' if r['b']['class'] == 'closed' else 'no'}")
+    out.extend(render_detail(rows, label_a, label_b))
     if coverage:
         out.append(coverage)
     out.append("STREAM-COMPARE-DONE")

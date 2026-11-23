@@ -565,7 +565,37 @@ enum ReceiptParser {
             result.warnings.append(
                 "Khối món chưa khép: tổng tiền món lệch tạm tính \(d1) xu (δ1) — thâm hụt nằm ở khối món.")
         }
+        // FL-299 (vòng 3, PHƯƠNG ÁN DỰ PHÒNG): thuế nhận CHỈ bằng vị
+        // trí trên một tờ KHÔNG in nhãn hay % thuế nào thì không được
+        // khép lặng — gắn cờ "chưa chắc". Chỉ THÊM cờ: không đổi số,
+        // không đổi trạng thái trọng tài (cờ không vào thang điểm §3.6
+        // hay quyết định ROI).
+        for t in unsupportedPositionalTaxes(lines: lines, taxes: result.taxes,
+                                            vendorVariants: hints?.labelVariants) {
+            result.warnings.append(
+                "Thuế \(warningMoney(t.amountCents)) chỉ suy từ VỊ TRÍ trên tờ — tờ không in nhãn hay % thuế nào. Chưa chắc: anh kiểm lại với giấy giúp.")
+        }
         return result
+    }
+
+    /// FL-299 (vòng 3): các dòng thuế cuối KHÔNG có bằng chứng in —
+    /// cả tờ không có dòng họ TAX/TAXSUM nào (kể cả dòng chỉ-nhãn, kể
+    /// cả ngoài khối tổng) VÀ dòng của token thuế không có % in (đúng
+    /// phép rateSupported trọng tài dùng khi nhận thuế). Thuế không có
+    /// dòng (ước tính) không thuộc diện này — đã mang nhãn ƯỚC TÍNH.
+    /// Không tồn tại quy tắc sạch tách thuế thật khỏi thuế ma ở diện
+    /// này (25-exxon-1: 7.00 là tiền rửa xe; 19-mcdonalds-2: 0.07 là
+    /// thuế thật, cùng chữ ký) — nên chỉ GẮN CỜ, không bỏ thuế.
+    static func unsupportedPositionalTaxes(lines: [OCRLine], taxes: [ParsedTaxLine],
+                                           vendorVariants: [String: String]?) -> [ParsedTaxLine] {
+        guard !taxes.isEmpty else { return [] }
+        let (_, rates, labels) = CandidateFactory.generate(lines: lines,
+                                                           vendorVariants: vendorVariants)
+        if labels.contains(where: { $0.family == "TAX" || $0.family == "TAXSUM" }) { return [] }
+        return taxes.filter { t in
+            guard let li = t.lineIndex, li >= 0, li < labels.count else { return false }
+            return !CandidateFactory.rateSupported(lineIndex: li, rates: rates)
+        }
     }
 
     // MARK: - REPARSE: đọc lại hoá đơn đã lưu từ văn bản thô đã lưu
