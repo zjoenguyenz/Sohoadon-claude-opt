@@ -520,9 +520,59 @@ enum ImageStore {
         }
     }
 
+    // MARK: OPT-1 — bộ đệm theo DANH TÍNH file (tên + kích thước + mtime)
+    //
+    // Màn Chi Tiết / Kiểm Lại gọi load() 3–4 lần cho CÙNG một file
+    // trong MỖI lần vẽ thân view (mỗi phím gõ ở ô chữ là một lần
+    // vẽ) — OPTIMIZATION-AUDIT mục #2. Bộ đệm này trả lại đúng ảnh
+    // đã giải mã khi file trên đĩa CHƯA đổi. Ngữ nghĩa giữ nguyên:
+    // - mỗi lần gọi vẫn stat file: file mất -> không có khoá -> đi
+    //   đúng đường cũ (đọc hỏng -> nil), cổng thiếu-ảnh-gốc không
+    //   bao giờ bị bộ đệm che;
+    // - file bị thay (khôi phục từ kho an toàn, gắn lại) -> kích
+    //   thước/mtime đổi -> khoá mới -> đọc lại thật;
+    // - kết quả nil KHÔNG được đệm (lần sau thử lại như cũ).
+    // NSCache tự thả khi máy thiếu bộ nhớ; trần chi phí theo pixel.
+    private static let decodedCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 8
+        cache.totalCostLimit = 96 * 1024 * 1024
+        return cache
+    }()
+
+    /// Khoá danh tính của file: nil khi không stat được (khi đó
+    /// nơi gọi đi thẳng đường cũ, không chạm bộ đệm).
+    private static func identityKey(url: URL, fileName: String,
+                                    variant: String) -> NSString? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? Int,
+              let mtime = attrs[.modificationDate] as? Date else { return nil }
+        return "\(variant)|\(fileName)|\(size)|\(mtime.timeIntervalSinceReferenceDate)" as NSString
+    }
+
+    /// Chi phí ước của một ảnh trong bộ đệm = số byte RGBA khi vẽ.
+    private static func pixelCost(_ image: UIImage) -> Int {
+        let w = Int(image.size.width * image.scale)
+        let h = Int(image.size.height * image.scale)
+        return max(1, w * h * 4)
+    }
+
     static func load(fileName: String) -> UIImage? {
         guard !fileName.isEmpty else { return nil }
         let url = directory.appendingPathComponent(fileName)
+        let key = identityKey(url: url, fileName: fileName, variant: "full")
+        if let key, let cached = decodedCache.object(forKey: key) {
+            return cached
+        }
+        let image = loadUncached(fileName: fileName, url: url)
+        if let key, let image {
+            decodedCache.setObject(image, forKey: key, cost: pixelCost(image))
+        }
+        return image
+    }
+
+    /// Thân nạp NGUYÊN VĂN của bản trước OPT-1 (chỉ đổi tên hàm).
+    private static func loadUncached(fileName: String, url: URL) -> UIImage? {
         if fileName.lowercased().hasSuffix(".pdf") {
             // WP3 (CODE-AUDIT F1 mục 5): bằng chứng là PDF gốc — byte gốc giữ
             // nguyên trong thư mục, hiển thị bằng render trang 1 (PDFKit).
