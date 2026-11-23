@@ -281,6 +281,31 @@ struct ImageRun {
     }
 }
 
+/// A5 (vòng 2): các ca in vết nguồn gốc ở chế độ images (set 1).
+let traceCaseNames: Set<String> = ["25-exxon-1.jpg"]
+
+func printCaseTrace(name: String, run: ImageRun) {
+    let lines = run.outcome.diagnostics.assembly.lines
+    print("TRACE-CASE \(name) BEGIN lines=\(lines.count)")
+    for (i, l) in lines.enumerated() {
+        let fam = CandidateFactory.labelFamily(
+            of: l.text, hasMoney: l.text.contains { $0.isNumber }).family
+        print("TRACE-LINE \(i) [\(fam)] \(l.text)")
+    }
+    let r = run.parsed
+    print("TRACE-RESULT subtotal=\(r.subtotalCents.map(String.init) ?? "nil") "
+        + "total=\(r.totalCents.map(String.init) ?? "nil") arb=\(r.arbiterStatus ?? "nil")")
+    for t in r.taxes {
+        print("TRACE-TAX label=\(t.label) amount=\(t.amountCents) line=\(t.lineIndex.map(String.init) ?? "nil")")
+    }
+    for s in r.selectionTrace { print("TRACE-SEL \(s)") }
+    for k in run.outcome.provenance.keys.sorted() {
+        print("TRACE-PROV \(k) = \(String(describing: run.outcome.provenance[k]!))")
+    }
+    print("TRACE-ROI rounds=\(run.outcome.diagnostics.roiRounds.count)")
+    print("TRACE-CASE \(name) END")
+}
+
 func runImage(_ cg: CGImage) -> ImageRun {
     let outcome = ReceiptReader.read(ReadRequest(
         source: .photoLibrary,
@@ -1034,6 +1059,13 @@ case "images":
                 + " roi=\(run.outcome.diagnostics.roiRounds.count) arb=\(run.parsed.arbiterStatus ?? "nil")")
             if let dumpDir, set == 1 {
                 dumpImageRun(name: url.lastPathComponent, run: run, dir: dumpDir)
+            }
+            // A5 (vòng 2, CHỈ CÔNG CỤ): truy vết nguồn gốc thuế cho
+            // các ca có lỗi ghi sổ — in dòng đã ráp + họ nhãn, dòng
+            // thuế cuối + chỉ số dòng nguồn, vết chọn và provenance.
+            // Chỉ IN; không đổi phán quyết nào của cổng.
+            if set == 1, traceCaseNames.contains(url.lastPathComponent) {
+                printCaseTrace(name: url.lastPathComponent, run: run)
             }
             okCount += 1
         }
