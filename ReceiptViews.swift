@@ -955,6 +955,29 @@ struct ReceiptDetailView: View {
                 }
             }
 
+            // A12(iv) (vòng 2, WP9): nhật ký hồ sơ — CHỈ ĐỌC dấu vết đã
+            // ghi trên bản ghi (reviewedAt, userEnteredFieldNames…);
+            // không ghi thêm sự kiện nào.
+            Section("Nhật ký hồ sơ") {
+                ForEach(AuditTrail.rows(
+                    createdAt: receipt.createdAt,
+                    sourceLabel: AuditTrail.sourceLabel(receipt.sourceTypeRaw),
+                    sourceFileName: receipt.sourceFileName,
+                    parserVersion: receipt.parserVersion,
+                    isReviewed: receipt.status == .reviewed,
+                    reviewedAt: receipt.reviewedAt,
+                    userEnteredFieldNames: receipt.userEnteredFieldNames,
+                    duplicateOfStableID: receipt.duplicateOfStableID,
+                    formatDate: { $0.formatted(date: .abbreviated, time: .shortened) }),
+                        id: \.label) { row in
+                    LabeledContent(row.label) {
+                        Text(row.value)
+                            .font(.caption).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+            }
+
             // F3 (WP1): văn bản đọc thô đã lưu — chỉ hiện khi có chữ (CODE-AUDIT
             // F3 mục 2). WP3 đóng F3 mục 3: nhãn trung thực theo nguồn —
             // hoá đơn nạp từ PDF lớp chữ thì ghi "Văn bản trong PDF", còn

@@ -337,3 +337,81 @@ enum RetentionPolicy {
         utcCalendar.component(.year, from: date)
     }
 }
+
+// MARK: - A12(iv): nhật ký hồ sơ — CHỈ ĐỌC dữ liệu đã ghi
+
+/// A12 (vòng 2, WP9): xem lại dấu vết đã có sẵn trên bản ghi —
+/// thời điểm tạo, nguồn nạp, bộ đọc, thời điểm duyệt (reviewedAt) và
+/// các trường anh đã nhập tay (userEnteredFieldNames). KHÔNG ghi sự
+/// kiện mới nào; thuần Foundation để harness kiểm.
+enum AuditTrail {
+    struct Row: Equatable {
+        var label: String
+        var value: String
+    }
+
+    /// Tên hiển thị của tên trường được ghi trong userEnteredFieldNames.
+    /// Tên lạ (đời sau thêm) hiện nguyên văn — không giấu, không đoán.
+    static func fieldLabel(_ name: String) -> String {
+        switch name {
+        case "vendor": return "Tên tiệm"
+        case "date": return "Ngày"
+        case "subtotal": return "Tạm tính"
+        case "tax": return "Thuế"
+        case "total": return "Tổng"
+        case "classification": return "Loại (Cá nhân / Business)"
+        case "category": return "Mục chi"
+        case "businessPurpose": return "Mục đích business"
+        default: return name
+        }
+    }
+
+    /// Nhãn nguồn nạp theo SourceType.rawValue (giá trị lạ hiện
+    /// nguyên văn).
+    static func sourceLabel(_ raw: String) -> String {
+        switch raw {
+        case "camera": return "Chụp bằng camera"
+        case "photoLibrary": return "Ảnh từ thư viện"
+        case "pdfImport": return "File PDF"
+        case "screenshot": return "Ảnh chụp màn hình"
+        case "fileImport": return "File từ app Files"
+        case "unknown": return "Không ghi nguồn"
+        default: return raw
+        }
+    }
+
+    static func rows(createdAt: Date,
+                     sourceLabel: String,
+                     sourceFileName: String?,
+                     parserVersion: String,
+                     isReviewed: Bool,
+                     reviewedAt: Date?,
+                     userEnteredFieldNames: [String],
+                     duplicateOfStableID: String?,
+                     formatDate: (Date) -> String) -> [Row] {
+        var out: [Row] = []
+        out.append(Row(label: "Tạo lúc", value: formatDate(createdAt)))
+        let src = (sourceFileName?.isEmpty ?? true)
+            ? sourceLabel : "\(sourceLabel) · \(sourceFileName!)"
+        out.append(Row(label: "Nguồn nạp", value: src))
+        out.append(Row(label: "Bộ đọc",
+                       value: parserVersion.isEmpty ? "đời đầu (không ghi)" : parserVersion))
+        if let reviewedAt {
+            out.append(Row(label: "Duyệt lúc", value: formatDate(reviewedAt)))
+        } else {
+            out.append(Row(label: "Duyệt lúc",
+                           value: isReviewed ? "đã duyệt — không có dấu thời điểm (tờ đời cũ)"
+                                             : "chưa duyệt"))
+        }
+        // Giữ thứ tự đã ghi, bỏ tên lặp.
+        var seen = Set<String>()
+        let names = userEnteredFieldNames.filter { seen.insert($0).inserted }
+        out.append(Row(label: "Anh nhập / sửa tay",
+                       value: names.isEmpty ? "không trường nào"
+                           : names.map(fieldLabel).joined(separator: ", ")))
+        if let dup = duplicateOfStableID, !dup.isEmpty {
+            out.append(Row(label: "Ghi nhận là bản trùng của", value: dup))
+        }
+        return out
+    }
+}

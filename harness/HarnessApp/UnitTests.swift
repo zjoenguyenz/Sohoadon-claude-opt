@@ -48,6 +48,7 @@ enum HarnessUnitTests {
         runExportKitTests(check)
         runCostcoPDFVendorTests(check)
         runStoreTraitsTests(check)
+        runAuditTrailTests(check)
         return lines
     }
 
@@ -1937,5 +1938,32 @@ enum HarnessUnitTests {
         let decoded = try? JSONDecoder().decode(StoreTraitsSummary.self,
                                                 from: Data(#"{"observations":3,"lineCounts":[],"itemCodeLinePcts":[],"totalLinePcts":[],"ratesPer100k":[],"taxLabelCounts":{},"categoryCounts":{},"taxCategoryCounts":{}}"#.utf8))
         check("ST07-tom-tat-giai-ma-duoc", decoded?.observations == 3)
+    }
+
+    // MARK: - A12(iv) (vòng 2): nhật ký hồ sơ — chỉ đọc
+
+    static func runAuditTrailTests(_ check: (String, Bool) -> Void) {
+        let d0 = Date(timeIntervalSince1970: 0)
+        let d1 = Date(timeIntervalSince1970: 86_400)
+        func fmt(_ d: Date) -> String { d == d0 ? "D0" : "D1" }
+        let r = AuditTrail.rows(createdAt: d0, sourceLabel: AuditTrail.sourceLabel("pdfImport"),
+                                sourceFileName: "a.pdf", parserVersion: "core-v4-4",
+                                isReviewed: true, reviewedAt: d1,
+                                userEnteredFieldNames: ["vendor", "total", "vendor", "zzz"],
+                                duplicateOfStableID: nil, formatDate: fmt)
+        check("AT01-hang-co-dinh-thu-tu",
+              r.map(\.label) == ["Tạo lúc", "Nguồn nạp", "Bộ đọc", "Duyệt lúc", "Anh nhập / sửa tay"])
+        check("AT02-gia-tri-dung", r[0].value == "D0" && r[1].value == "File PDF · a.pdf"
+              && r[3].value == "D1")
+        check("AT03-bo-lap-giu-thu-tu-ten-la-nguyen-van",
+              r[4].value == "Tên tiệm, Tổng, zzz")
+        let old = AuditTrail.rows(createdAt: d0, sourceLabel: "x", sourceFileName: nil,
+                                  parserVersion: "", isReviewed: true, reviewedAt: nil,
+                                  userEnteredFieldNames: [], duplicateOfStableID: "S1",
+                                  formatDate: fmt)
+        check("AT04-to-doi-cu-khong-bia-thoi-diem",
+              old[3].value.contains("không có dấu thời điểm")
+              && old[4].value == "không trường nào"
+              && old.last?.value == "S1")
     }
 }
