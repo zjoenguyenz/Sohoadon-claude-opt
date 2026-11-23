@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 import UIKit
 import PDFKit
+import ImageIO
 
 // MARK: - Phân loại Cá nhân / Business / Chưa rõ
 
@@ -569,6 +570,74 @@ enum ImageStore {
             decodedCache.setObject(image, forKey: key, cost: pixelCost(image))
         }
         return image
+    }
+
+    // MARK: OPT-1 — thumbnail cho dòng danh sách (OPTIMIZATION-AUDIT #1)
+
+    private static let thumbnailCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 400
+        cache.totalCostLimit = 48 * 1024 * 1024
+        return cache
+    }()
+
+    /// Ảnh nhỏ cho ô 46×58 pt của ReceiptRowView. Bản trước giải mã
+    /// TOÀN BỘ ảnh gốc (trung vị BenchImages 2.3 MP ≈ 8.9 MB RGBA,
+    /// lớn nhất 100 MP ≈ 382 MB) chỉ để vẽ ô này.
+    ///
+    /// Kích thước chọn để KHÔNG đổi hình: cạnh NGẮN của ảnh nhỏ ≥
+    /// `minShortSidePixels` (mặc định 180 ≥ 58 pt × 3) nên với
+    /// .scaledToFill vào khung 46×58 pt ở màn 3x ảnh vẫn được thu,
+    /// không bao giờ bị phóng. Hướng EXIF áp như UIImage(data:)
+    /// (kCGImageSourceCreateThumbnailWithTransform).
+    /// Không thu nhỏ được (PDF, ảnh vốn đã nhỏ, ImageIO lỗi) -> trả
+    /// đúng load(fileName:) như bản cũ — dòng hiện y như trước.
+    static func loadThumbnail(fileName: String,
+                              minShortSidePixels: Int = 180) -> UIImage? {
+        guard !fileName.isEmpty else { return nil }
+        if fileName.lowercased().hasSuffix(".pdf") {
+            return load(fileName: fileName)
+        }
+        let url = directory.appendingPathComponent(fileName)
+        guard let key = identityKey(url: url, fileName: fileName,
+                                    variant: "thumb\(minShortSidePixels)")
+        else { return load(fileName: fileName) }
+        if let cached = thumbnailCache.object(forKey: key) {
+            return cached
+        }
+        guard let thumb = downsample(url: url,
+                                     minShortSidePixels: minShortSidePixels)
+        else { return load(fileName: fileName) }
+        thumbnailCache.setObject(thumb, forKey: key, cost: pixelCost(thumb))
+        return thumb
+    }
+
+    /// Thu nhỏ bằng ImageIO, không giải mã ảnh toàn phân giải. nil
+    /// khi không đọc được kích thước hoặc ảnh không lớn hơn đích.
+    private static func downsample(url: URL,
+                                   minShortSidePixels: Int) -> UIImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                as? [CFString: Any],
+              let width = props[kCGImagePropertyPixelWidth] as? Int,
+              let height = props[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0 else { return nil }
+        let shortSide = min(width, height)
+        let longSide = max(width, height)
+        guard shortSide > minShortSidePixels else { return nil }
+        let maxPixel = Int((Double(longSide) * Double(minShortSidePixels)
+                            / Double(shortSide)).rounded(.up))
+        guard maxPixel < longSide else { return nil }
+        let thumbOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+        ] as CFDictionary
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions)
+        else { return nil }
+        return UIImage(cgImage: cg)
     }
 
     /// Thân nạp NGUYÊN VĂN của bản trước OPT-1 (chỉ đổi tên hàm).

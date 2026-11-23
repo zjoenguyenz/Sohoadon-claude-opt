@@ -283,8 +283,10 @@ struct ReceiptRowView: View {
         // 10 + viền tóc; không có ảnh thì monogram tiệm (màu ổn
         // định theo tên); "Chờ duyệt" thành chip trạng thái.
         HStack(spacing: DS.spaceM) {
+            // OPT-1 (audit #1): ảnh nhỏ đã thu cho ô 46×58 thay vì
+            // giải mã cả ảnh gốc mỗi dòng — hình hiển thị không đổi.
             if let firstOriginal = receipt.allOriginalImageFileNames.first,
-               let image = ImageStore.load(fileName: firstOriginal) {
+               let image = ImageStore.loadThumbnail(fileName: firstOriginal) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
