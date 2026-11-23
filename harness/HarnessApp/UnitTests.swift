@@ -1608,7 +1608,7 @@ enum HarnessUnitTests {
 
     // MARK: - A1: planner khôi phục Drive
     private static func runRestorePlannerTests(_ check: (String, Bool) -> Void) {
-        func e(_ id: String, _ status: String = "active", _ hash: String = "h1",
+        func e(_ id: String, _ status: String = "active", hash: String = "h1",
                folder: Bool = true, deleted: Bool = false) -> RestoreRemoteEntry {
             RestoreRemoteEntry(id: id, status: status, contentHash: hash,
                                hasReceiptFolder: folder, inDeletedFolder: deleted)
