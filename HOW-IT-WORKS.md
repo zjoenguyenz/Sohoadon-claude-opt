@@ -37,9 +37,15 @@ that is NOT flagged is the worst possible failure.
    no card match → the receipt waits in a review inbox, never guessed.
    Line-level Personal/Business split is FOUNDATION ONLY: the `LineItem`
    fields exist, but nothing writes them and there is no UI.
-   Store profiles (v1) learn only ZIP + tax category + approved-receipt count
-   from the owner's own approved receipts — local learning, on-device only
-   (`StoreProfiles.json` in Application Support).
+   Store profiles learn from the owner's own APPROVED receipts only —
+   local learning, on-device only (`StoreProfiles.json` in Application
+   Support). v1 fields: ZIP + tax category + approved-receipt count. Since
+   round 2 (A10) a profile also learns `traits` (receipt layout traits,
+   the store's usual tax labels, totals-block position, observed tax
+   rate, common categories). Traits are SUGGEST-ONLY: Review shows them
+   as "Gợi ý theo tiệm (chưa áp dụng)" and they are never applied to any
+   field read from the paper. `traits` is Optional, so v1 files still
+   decode.
 5. **Review & approve** — nothing is an official record until the owner
    approves it. The review screen shows original image beside parsed fields;
    he edits the wrong field, not the whole receipt.
@@ -50,9 +56,11 @@ that is NOT flagged is the worst possible failure.
    mirrors receipts to a `GL-Keeper/` folder on the owner's Drive with a
    manifest; it is a backup/mirror, not the source of truth. Sync must
    self-recover from network drops without erroring the run.
-8. **Export** — the Tax Pack export does NOT exist yet: Reports shows a
-   preview table only, with a "coming in a later version" note. Planned:
-   PDF + CSV (must match the app to the cent) + ZIP per year.
+8. **Export** — the Tax Pack export EXISTS (round 2, A3): per tax year, a
+   PDF summary + a detailed CSV, packaged in a ZIP together with the
+   original files and `muc-luc.csv`. Totals count OFFICIAL receipts only
+   and must match the Reports screen to the cent; on any mismatch the
+   export is refused.
 
 ## Build & delivery flow (how code reaches the owner's phone)
 - GitHub Actions workflow `build-ipa.yml` on branch `v3` builds TWO unsigned
@@ -69,8 +77,12 @@ that is NOT flagged is the worst possible failure.
 ## What "optimization" must never break
 - The reconciliation/flag gate, the approval gate, duplicate detection
   (same purchase via photo + PDF must be caught), Face ID lock, and the
-  diagnostic-log export. (7-year retention: `Receipt.retentionUntil` exists
-  in the model but is never assigned anywhere yet.)
+  diagnostic-log export. (7-year retention: `Receipt.retentionUntil` IS
+  assigned since round 2, A6 — rule: 31 Dec of (tax year + 7), UTC; set at
+  the two points that write the receipt date: save in Review, and
+  "Đọc lại" in Detail when the date changes. Settings has a view-only
+  list of receipts reaching the horizon. No backfill of older receipts,
+  and nothing is ever deleted.)
 - Money math must stay cent-exact. Any change near parsing/totals must be
   validated against the bench harness, not just compiled.
 
