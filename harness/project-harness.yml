@@ -63,6 +63,14 @@ targets:
       # UIKit của file nằm sau #if canImport(UIKit) nên
       # không lọt vào harness macOS.
       - ../ImageIntegrity.swift
+      # A1 (vòng 2): planner khôi phục Drive THUẦN Foundation —
+      # test RS01… chạy bằng Swift thật.
+      - ../RestorePlanner.swift
+      # A2 + A3 (vòng 2): lõi xuất THUẦN — test EX01… (ZIP khứ hồi
+      # cả bằng /usr/bin/unzip của macOS).
+      - ../ExportKit.swift
+      # A10 (vòng 2): nét tiệm THUẦN — test ST01…
+      - ../StoreTraits.swift
       # G5 (sửa cổng đo — việc gốc của vụ "100 lượt xanh giả"):
       # ReadPipeline.swift NAY VÀO harness. File chỉ chạm UIKit
       # ở 3 điểm (import, uprightCGImage(UIImage),

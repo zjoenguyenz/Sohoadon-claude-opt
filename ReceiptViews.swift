@@ -386,18 +386,14 @@ struct ReceiptListView: View {
     /// (tổng in + tip). Trước gói này tổng chạy tính cả tờ
     /// đang chờ duyệt và dùng totalCents trơn.
     private func sum(of kind: Classification, in items: [Receipt]) -> Int {
-        items.filter {
-            $0.classification == kind && $0.status == .reviewed
-                && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
+        // A7: luật chính thức một nguồn (OfficialReceiptRule).
+        items.officialTotalCents(kind: kind)
     }
 
     /// P2-0/C-2: tiền đang CHỜ duyệt (mọi loại) — hiện riêng
     /// một dòng minh bạch, không trộn vào tổng chính thức.
     private func pendingSum(in items: [Receipt]) -> Int {
-        items.filter {
-            $0.status == .needsReview && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
+        items.pendingTotalCents()
     }
 
     /// P2-0 (mục nối duplicateOf): tập stableID đang bị ít
@@ -884,10 +880,27 @@ struct ReceiptDetailView: View {
                             .font(.caption)
                     }
                     LabeledContent("Tính vào tổng", value: "Không — đã loại khỏi tổng")
+                    // A11(iv): so sánh hai tờ cạnh nhau — CHỈ XEM.
+                    NavigationLink {
+                        DuplicateCompareView(left: receipt, leftTitle: "Tờ này",
+                                             right: original, rightTitle: "Tờ gốc")
+                    } label: {
+                        Label("So sánh hai tờ cạnh nhau", systemImage: "rectangle.split.2x1")
+                    }
                 }
                 if !duplicateCopies.isEmpty {
                     LabeledContent("Bản trùng của tờ này",
                                    value: "\(duplicateCopies.count) bản — đã loại khỏi tổng")
+                    // A11(iv): mỗi bản trùng một lối so sánh — CHỈ XEM.
+                    ForEach(duplicateCopies) { copy in
+                        NavigationLink {
+                            DuplicateCompareView(left: receipt, leftTitle: "Tờ này",
+                                                 right: copy, rightTitle: "Bản trùng")
+                        } label: {
+                            Label("So sánh với bản trùng — \(copy.date.formatted(date: .abbreviated, time: .omitted))",
+                                  systemImage: "rectangle.split.2x1")
+                        }
+                    }
                 }
                 LabeledContent("Bản bộ đọc của app") {
                     Text(currentParserVersion).font(.caption).foregroundStyle(.secondary)
@@ -955,6 +968,29 @@ struct ReceiptDetailView: View {
                 } else {
                     Button { loadDiagnostics() } label: {
                         Label("Tải hồ sơ chẩn đoán", systemImage: "waveform.path.ecg")
+                    }
+                }
+            }
+
+            // A12(iv) (vòng 2, WP9): nhật ký hồ sơ — CHỈ ĐỌC dấu vết đã
+            // ghi trên bản ghi (reviewedAt, userEnteredFieldNames…);
+            // không ghi thêm sự kiện nào.
+            Section("Nhật ký hồ sơ") {
+                ForEach(AuditTrail.rows(
+                    createdAt: receipt.createdAt,
+                    sourceLabel: AuditTrail.sourceLabel(receipt.sourceTypeRaw),
+                    sourceFileName: receipt.sourceFileName,
+                    parserVersion: receipt.parserVersion,
+                    isReviewed: receipt.status == .reviewed,
+                    reviewedAt: receipt.reviewedAt,
+                    userEnteredFieldNames: receipt.userEnteredFieldNames,
+                    duplicateOfStableID: receipt.duplicateOfStableID,
+                    formatDate: { $0.formatted(date: .abbreviated, time: .shortened) }),
+                        id: \.label) { row in
+                    LabeledContent(row.label) {
+                        Text(row.value)
+                            .font(.caption).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
                     }
                 }
             }
@@ -1530,6 +1566,8 @@ struct ReceiptDetailView: View {
         receipt.storeNumber = result.storeNumber
         if let date = result.date {
             receipt.date = date
+            // A6: ngày đổi -> năm thuế có thể đổi -> hạn lưu giữ theo.
+            receipt.applyRetentionPolicy()
         }
         receipt.subtotalCents = result.subtotalCents
         receipt.totalCents = result.totalCents
@@ -1798,6 +1836,10 @@ struct ReviewView: View {
     /// Pha A không cần suất); hồ sơ tiệm chỉ học giá trị này, không
     /// học giá trị mặc định hiển thị của picker.
     @State private var landingAppliedCategory: TaxCategory? = nil
+    /// A10: gợi ý theo tiệm (chỉ hiển thị), nạp một lần khi mở màn.
+    @State private var storeSuggestions: [String] = []
+    /// A11(iii): đích "cờ kế tiếp" vừa nhảy tới.
+    @State private var lastJumpTarget: String? = nil
     @State private var showDuplicateAlert = false
     @State private var duplicateCount = 0
     /// N2-FIX: kiểm tra trùng THẤT BẠI (fetch lỗi) — khác hẳn
@@ -1971,8 +2013,29 @@ struct ReviewView: View {
         return totalText.isEmpty ? "—" : totalText
     }
 
+    /// A11(iii): trường tin cậy thấp (vendor/date/total) theo bộ đọc.
+    private var lowConfidenceFields: [String] {
+        ReviewConfidence.lowFields(vendor: draft.result.vendorConfidence,
+                                   date: draft.result.dateConfidence,
+                                   total: draft.result.totalConfidence)
+    }
+
+    /// A11(iii): đích của nút "Cờ kế tiếp" — khối cảnh báo trước,
+    /// rồi các trường tin cậy thấp theo thứ tự trên màn.
+    private var flagJumpTargets: [String] {
+        (visibleWarnings.isEmpty ? [] : ["flags"]) + lowConfidenceFields
+    }
+
+    /// A11(iii): chú thích dưới trường tin cậy thấp (chữ DESIGN-AUDIT §4.7).
+    private func lowConfidenceCaption(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(DS.warning)
+    }
+
     var body: some View {
         NavigationStack {
+          ScrollViewReader { proxy in
             List {
                 Section {
                     ledgerBanner
@@ -2029,6 +2092,7 @@ struct ReviewView: View {
                                 .foregroundStyle(.orange)
                         }
                     }
+                    .id("rv-flags")
                 }
 
                 // V3 (Pha 4, §7): pill hiện diện trường — mức dữ
@@ -2063,9 +2127,41 @@ struct ReviewView: View {
                     }
                 }
 
+                // A10: nét tiệm đã học từ các tờ anh DUYỆT của cùng
+                // tiệm — CHỈ GỢI Ý, không áp vào trường nào.
+                if !storeSuggestions.isEmpty {
+                    Section("Gợi ý theo tiệm (chưa áp dụng)") {
+                        ForEach(Array(storeSuggestions.enumerated()),
+                                id: \.offset) { _, line in
+                            Text(line)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 Section("Thông tin đọc được") {
-                    TextField("Tiệm / Vendor", text: $vendorText)
-                    DatePicker("Ngày", selection: $dateValue, displayedComponents: [.date, .hourAndMinute])
+                    // A11(iii): trường tin cậy thấp -> tô nền cảnh báo
+                    // (cùng kiểu listRowBackground của banner sổ) + chú
+                    // thích; không đổi giá trị nào.
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField("Tiệm / Vendor", text: $vendorText)
+                        if lowConfidenceFields.contains("vendor") {
+                            lowConfidenceCaption("Tên tiệm chưa chắc — anh nhìn ảnh gốc giúp")
+                        }
+                    }
+                    .id("rv-vendor")
+                    .listRowBackground(lowConfidenceFields.contains("vendor")
+                                       ? DS.warning.opacity(0.10) : nil)
+                    VStack(alignment: .leading, spacing: 4) {
+                        DatePicker("Ngày", selection: $dateValue, displayedComponents: [.date, .hourAndMinute])
+                        if lowConfidenceFields.contains("date") {
+                            lowConfidenceCaption("Ngày chưa chắc — anh kiểm tra giúp")
+                        }
+                    }
+                    .id("rv-date")
+                    .listRowBackground(lowConfidenceFields.contains("date")
+                                       ? DS.warning.opacity(0.10) : nil)
                     if dateWasMissing {
                         // C8-FIX: nói thẳng ngày đang hiện là
                         // ngày TẠM — bản cũ im lặng lưu ngày hôm
@@ -2100,6 +2196,9 @@ struct ReviewView: View {
                     }
                     .font(.body.weight(.semibold))
                     .foregroundStyle(DS.brand)
+                    .id("rv-total")
+                    .listRowBackground(lowConfidenceFields.contains("total")
+                                       ? DS.warning.opacity(0.10) : nil)
                     // P2-0/C-9: ô TIP chỉ hiện với tờ nhà
                     // hàng (giấy có TIP / GRATUITY / SUGGESTED
                     // TIP) — trước gói này app không có đường
@@ -2114,10 +2213,10 @@ struct ReviewView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    if draft.result.totalConfidence > 0 {
-                        Text("Độ tin cậy của tổng tiền: \(Int(draft.result.totalConfidence * 100))%")
-                            .font(.caption)
-                            .foregroundStyle(draft.result.totalConfidence < 0.85 ? .orange : .secondary)
+                    // A11(iii) (DESIGN-AUDIT §4.7): không in % tin cậy
+                    // thô nữa — tổng tin cậy thấp có chú thích riêng.
+                    if lowConfidenceFields.contains("total") {
+                        lowConfidenceCaption("Tổng tiền chưa chắc — anh kiểm tra giúp")
                     }
                     // PHA 2 (L-47): khối hạ cánh bằng thuế — nói rõ
                     // số nào là ước tính, phép suy đã dùng, và cho
@@ -2292,7 +2391,33 @@ struct ReviewView: View {
             .dsListBackground()
             .navigationTitle("Kiểm Lại Hoá Đơn")
             .navigationBarTitleDisplayMode(.inline)
-            .onAppear { applySuggestionOnce() }
+            // A11(iii): nút nhảy tới cờ kế tiếp (khối cảnh báo, rồi
+            // các trường tin cậy thấp) — chỉ cuộn, không đổi dữ liệu.
+            .toolbar {
+                if !flagJumpTargets.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            if let next = ReviewConfidence.nextTarget(
+                                targets: flagJumpTargets, after: lastJumpTarget) {
+                                lastJumpTarget = next
+                                withAnimation { proxy.scrollTo("rv-\(next)", anchor: .center) }
+                            }
+                        } label: {
+                            Label("Cờ kế tiếp (\(flagJumpTargets.count))",
+                                  systemImage: "flag.fill")
+                        }
+                        .accessibilityLabel("Tới cờ kế tiếp, \(flagJumpTargets.count) chỗ cần xem")
+                    }
+                }
+            }
+            .onAppear {
+                applySuggestionOnce()
+                // A10: đọc hồ sơ tiệm một lần (file nhỏ, trên máy).
+                storeSuggestions = StoreProfiles.suggestions(
+                    forKey: TaxLanding.profileKey(
+                        vendorKey: draft.result.vendorKey,
+                        vendor: vendorText.trimmingCharacters(in: .whitespaces)))
+            }
             // G3 (luật bền hoá): MỌI thay đổi ở các ô sửa đều
             // lên lịch ghi lớp sửa dở vào bản chụp nháp — chốt
             // theo sự kiện rời rạc qua chống dội 0,6 giây yên
@@ -2330,6 +2455,7 @@ struct ReviewView: View {
             } message: {
                 Text("Hoá đơn CHƯA được lưu vào máy. Anh kiểm tra dung lượng trống rồi bấm Lưu lại — đừng rời màn này kẻo mất bản nháp.")
             }
+          } // A11(iii): ScrollViewReader
         }
     }
 
@@ -2792,6 +2918,8 @@ struct ReviewView: View {
         if receipt.status == .reviewed {
             receipt.reviewedAt = Date()
         }
+        // A6: hạn lưu giữ 7 năm theo năm thuế (chỉ hiển thị).
+        receipt.applyRetentionPolicy()
 
         modelContext.insert(receipt)
         for (index, parsed) in draft.result.items.enumerated() {
@@ -2841,18 +2969,89 @@ struct ReviewView: View {
         // địa chỉ đã lưu; loại hàng = loại đang chốt ở Kiểm Lại
         // (picker hạ cánh khi có hạ cánh, không thì phân loại từ
         // món đọc được; không chắc thì để trống, không bịa).
+        let learnedCategory = landingAppliedCategory
+            ?? TaxLanding.classifyCategory(items: draft.result.items)
         StoreProfiles.learn(
             key: TaxLanding.profileKey(
                 vendorKey: draft.result.vendorKey,
                 vendor: receipt.vendor),
             zip: TaxLanding.extractZIP(from: receipt.vendorAddress),
-            category: landingAppliedCategory
-                ?? TaxLanding.classifyCategory(items: draft.result.items))
+            category: learnedCategory,
+            // A10: nét tiệm từ ĐÚNG tờ anh vừa duyệt (số đã chốt).
+            traits: StoreTraits.observe(
+                rawText: draft.result.rawText,
+                subtotalCents: receipt.subtotalCents,
+                taxCents: receipt.taxCents,
+                taxLabels: draft.result.taxes.map(\.label),
+                category: receipt.category,
+                taxCategoryRaw: learnedCategory?.rawValue))
         onDone()
         // P2-1: gương thư mục Files chạy nền sau mỗi lần lưu
         // hoá đơn mới thành công (lớp phụ — không chặn luồng
         // lưu, không ném lỗi về màn Kiểm Lại).
         MirrorSync.requestSync(using: modelContext)
         DriveSync.requestSync(using: modelContext)
+    }
+}
+
+// MARK: - A11(iv) (vòng 2, WP8): so sánh hai tờ trùng cạnh nhau
+
+/// Màn CHỈ XEM: hai ảnh gốc cạnh nhau (mỗi bên 50% bề ngang, cao 220,
+/// bo 8 — DESIGN-AUDIT §4.7) + các trường chính của mỗi tờ. Không có
+/// nút gộp/xoá/giữ nào: quan hệ trùng vẫn đổi ở đúng chỗ cũ.
+struct DuplicateCompareView: View {
+    let left: Receipt
+    let leftTitle: String
+    let right: Receipt
+    let rightTitle: String
+
+    var body: some View {
+        ScrollView {
+            HStack(alignment: .top, spacing: 12) {
+                column(left, title: leftTitle)
+                column(right, title: rightTitle)
+            }
+            .padding()
+        }
+        .navigationTitle("So sánh hai tờ")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private func column(_ r: Receipt, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            Group {
+                if let name = r.allOriginalImageFileNames.first,
+                   let image = ImageStore.load(fileName: name) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    Image(systemName: "photo")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 220)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            Text(r.vendor.isEmpty ? "(Chưa rõ tiệm)" : r.vendor)
+                .font(.callout.weight(.semibold))
+            Text(r.date.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption)
+            Text(r.totalCents.map { formatMoney(cents: $0) } ?? "—")
+                .font(.callout.weight(.semibold))
+                .monospacedDigit()
+            if let last4 = r.cardLast4 {
+                Text("•• \(last4)").font(.caption).foregroundStyle(.secondary)
+            }
+            Text(r.status == .reviewed ? "Đã duyệt" : "Chờ duyệt")
+                .font(.caption).foregroundStyle(.secondary)
+            if r.excludedFromTotals {
+                Text("Đã loại khỏi tổng").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

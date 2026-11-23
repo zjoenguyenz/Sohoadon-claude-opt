@@ -591,20 +591,6 @@ enum ReceiptParser {
     /// Độ tin cậy gán cho dòng khôi phục từ văn bản đã lưu (xem trên).
     static let recoveredLineConfidence: Double = 0.5
 
-    /// Đọc lại một hoá đơn ĐÃ LƯU: tách văn bản thô đã lưu theo "\n"
-    /// thành [OCRLine] rồi gọi đúng bộ đọc hiện hành — cùng một
-    /// bộ đọc như lần quét mới, không fork logic. Dòng rỗng/xen
-    /// khoảng trắng được bộ đọc tự cắt/lọc như đường quét.
-    /// V4-4 (§8.5 — Điều 2 B2): bộ đọc hiện hành là parseV4 —
-    /// đường đọc lại này là nơi bản sửa lõi áp lên DỮ LIỆU ĐÃ
-    /// LƯU của anh (nút "Đọc lại" ở màn Chi Tiết).
-    static func reparse(storedText: String) -> ParseResult {
-        let lines = storedText
-            .split(separator: "\n")
-            .map { OCRLine(text: String($0), confidence: recoveredLineConfidence) }
-        return parseV4(lines: lines)
-    }
-
 #if !GLKEEPER_V4_ONLY
     // MARK: - SAM'S CLUB (cổng từ prototype v0.1 đã đạt Mẫu 001)
 

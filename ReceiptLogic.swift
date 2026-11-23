@@ -278,3 +278,168 @@ enum ReceiptLogic {
         return .approveWithFlagConfirmation(flags: flags)
     }
 }
+
+// MARK: - A7: luật "tờ chính thức" — NGUỒN DUY NHẤT
+
+/// A7 (vòng 2): luật tờ CHÍNH THỨC trước đây được chép tay ở 5 chỗ
+/// (Trang Chủ ×2, Báo Cáo ×2, danh sách ×1) và luật tờ CHỜ DUYỆT ở
+/// 3 chỗ. Nay một nguồn duy nhất, thuần Foundation để harness kiểm
+/// bằng Swift thật. Nguyên văn luật cũ:
+/// - chính thức = status == .reviewed && !excludedFromTotals
+/// - chờ duyệt  = status == .needsReview && !excludedFromTotals
+/// - số được cộng = amountPaidCents ?? 0 (tổng in + tip; thiếu tổng = 0)
+enum OfficialReceiptRule {
+    static func isOfficial(isReviewed: Bool,
+                           excludedFromTotals: Bool) -> Bool {
+        isReviewed && !excludedFromTotals
+    }
+
+    static func isPending(isNeedsReview: Bool,
+                          excludedFromTotals: Bool) -> Bool {
+        isNeedsReview && !excludedFromTotals
+    }
+
+    static func countedCents(_ amountPaidCents: Int?) -> Int {
+        amountPaidCents ?? 0
+    }
+}
+
+// MARK: - A6: hạn lưu giữ 7 năm (tất định theo năm thuế)
+
+/// A6 (vòng 2): `Receipt.retentionUntil` có sẵn trong model nhưng
+/// chưa nơi nào gán. Luật tất định: hạn = 31/12 của (năm thuế + 7),
+/// 00:00 UTC theo lịch Gregory — cùng năm thuế luôn ra cùng một hạn,
+/// không phụ thuộc múi giờ máy. CHỈ để HIỂN THỊ: app không bao giờ
+/// tự xoá hoá đơn hay file gốc vì hạn này.
+enum RetentionPolicy {
+    static let years = 7
+
+    private static let utcCalendar: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }()
+
+    static func retentionUntil(taxYear: Int) -> Date? {
+        utcCalendar.date(from: DateComponents(
+            year: taxYear + years, month: 12, day: 31))
+    }
+
+    /// Tờ "tới ngưỡng lưu giữ": hạn đã qua hoặc rơi trong
+    /// `windowDays` ngày tới tính từ `now`.
+    static func reachesHorizon(retentionUntil: Date, now: Date,
+                               windowDays: Int = 365) -> Bool {
+        retentionUntil <= now.addingTimeInterval(Double(windowDays) * 86_400)
+    }
+
+    /// Năm (UTC) của một hạn — để hiển thị nhóm.
+    static func year(of date: Date) -> Int {
+        utcCalendar.component(.year, from: date)
+    }
+}
+
+// MARK: - A12(iv): nhật ký hồ sơ — CHỈ ĐỌC dữ liệu đã ghi
+
+/// A12 (vòng 2, WP9): xem lại dấu vết đã có sẵn trên bản ghi —
+/// thời điểm tạo, nguồn nạp, bộ đọc, thời điểm duyệt (reviewedAt) và
+/// các trường anh đã nhập tay (userEnteredFieldNames). KHÔNG ghi sự
+/// kiện mới nào; thuần Foundation để harness kiểm.
+enum AuditTrail {
+    struct Row: Equatable {
+        var label: String
+        var value: String
+    }
+
+    /// Tên hiển thị của tên trường được ghi trong userEnteredFieldNames.
+    /// Tên lạ (đời sau thêm) hiện nguyên văn — không giấu, không đoán.
+    static func fieldLabel(_ name: String) -> String {
+        switch name {
+        case "vendor": return "Tên tiệm"
+        case "date": return "Ngày"
+        case "subtotal": return "Tạm tính"
+        case "tax": return "Thuế"
+        case "total": return "Tổng"
+        case "classification": return "Loại (Cá nhân / Business)"
+        case "category": return "Mục chi"
+        case "businessPurpose": return "Mục đích business"
+        default: return name
+        }
+    }
+
+    /// Nhãn nguồn nạp theo SourceType.rawValue (giá trị lạ hiện
+    /// nguyên văn).
+    static func sourceLabel(_ raw: String) -> String {
+        switch raw {
+        case "camera": return "Chụp bằng camera"
+        case "photoLibrary": return "Ảnh từ thư viện"
+        case "pdfImport": return "File PDF"
+        case "screenshot": return "Ảnh chụp màn hình"
+        case "fileImport": return "File từ app Files"
+        case "unknown": return "Không ghi nguồn"
+        default: return raw
+        }
+    }
+
+    static func rows(createdAt: Date,
+                     sourceLabel: String,
+                     sourceFileName: String?,
+                     parserVersion: String,
+                     isReviewed: Bool,
+                     reviewedAt: Date?,
+                     userEnteredFieldNames: [String],
+                     duplicateOfStableID: String?,
+                     formatDate: (Date) -> String) -> [Row] {
+        var out: [Row] = []
+        out.append(Row(label: "Tạo lúc", value: formatDate(createdAt)))
+        let src = (sourceFileName?.isEmpty ?? true)
+            ? sourceLabel : "\(sourceLabel) · \(sourceFileName!)"
+        out.append(Row(label: "Nguồn nạp", value: src))
+        out.append(Row(label: "Bộ đọc",
+                       value: parserVersion.isEmpty ? "đời đầu (không ghi)" : parserVersion))
+        if let reviewedAt {
+            out.append(Row(label: "Duyệt lúc", value: formatDate(reviewedAt)))
+        } else {
+            out.append(Row(label: "Duyệt lúc",
+                           value: isReviewed ? "đã duyệt — không có dấu thời điểm (tờ đời cũ)"
+                                             : "chưa duyệt"))
+        }
+        // Giữ thứ tự đã ghi, bỏ tên lặp.
+        var seen = Set<String>()
+        let names = userEnteredFieldNames.filter { seen.insert($0).inserted }
+        out.append(Row(label: "Anh nhập / sửa tay",
+                       value: names.isEmpty ? "không trường nào"
+                           : names.map(fieldLabel).joined(separator: ", ")))
+        if let dup = duplicateOfStableID, !dup.isEmpty {
+            out.append(Row(label: "Ghi nhận là bản trùng của", value: dup))
+        }
+        return out
+    }
+}
+
+// MARK: - A11(iii): trường tin cậy thấp ở Kiểm Lại
+
+/// A11 (vòng 2, WP8; DESIGN-AUDIT §4.7): trường nào cần tô cảnh báo.
+/// Chỉ khi bộ đọc CÓ tín hiệu tin cậy (> 0) và tín hiệu đó < 0.85 —
+/// 0 nghĩa là "không có tín hiệu" (màn cũ cũng ẩn % tổng khi = 0),
+/// không phải "tin cậy thấp". Thứ tự cố định: tiệm, ngày, tổng.
+enum ReviewConfidence {
+    static let threshold = 0.85
+
+    static func isLow(_ c: Double) -> Bool { c > 0 && c < threshold }
+
+    static func lowFields(vendor: Double, date: Double, total: Double) -> [String] {
+        var out: [String] = []
+        if isLow(vendor) { out.append("vendor") }
+        if isLow(date) { out.append("date") }
+        if isLow(total) { out.append("total") }
+        return out
+    }
+
+    /// Đích nhảy "cờ kế tiếp": khối cảnh báo (nếu có) rồi các trường
+    /// tin cậy thấp. `after` = đích vừa nhảy tới (nil = bắt đầu).
+    static func nextTarget(targets: [String], after current: String?) -> String? {
+        guard !targets.isEmpty else { return nil }
+        guard let current, let i = targets.firstIndex(of: current) else { return targets[0] }
+        return targets[(i + 1) % targets.count]
+    }
+}

@@ -24,18 +24,14 @@ struct HomeView: View {
     /// TRẢ (tổng in + tip). Trước gói này hero cộng cả tờ
     /// đang chờ duyệt và dùng totalCents trơn.
     private func yearSum(_ kind: Classification) -> Int {
-        currentYearReceipts.filter {
-            $0.classification == kind && $0.status == .reviewed
-                && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
+        // A7: luật chính thức một nguồn (OfficialReceiptRule).
+        currentYearReceipts.officialTotalCents(kind: kind)
     }
 
     /// P2-0/C-2: tiền chờ duyệt của năm nay — hiện một dòng
     /// riêng dưới thẻ hero, không trộn vào tổng chính thức.
     private var yearPendingTotal: Int {
-        currentYearReceipts.filter {
-            $0.status == .needsReview && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
+        currentYearReceipts.pendingTotalCents()
     }
 
     private var topCategories: [(name: String, kind: Classification, total: Int)] {
@@ -43,10 +39,10 @@ struct HomeView: View {
         // P2-0/C-2: chỉ tờ chính thức (đã duyệt, không loại
         // khỏi tổng), số đã trả.
         for receipt in currentYearReceipts
-        where receipt.status == .reviewed && !receipt.excludedFromTotals {
+        where receipt.isOfficialRecord {
             let key = receipt.category.isEmpty ? "Khác" : receipt.category
             let old = totals[key] ?? (receipt.classification, 0)
-            totals[key] = (receipt.classification, old.1 + (receipt.amountPaidCents ?? 0))
+            totals[key] = (receipt.classification, old.1 + receipt.countedAmountCents)
         }
         return totals
             .map { (name: $0.key, kind: $0.value.0, total: $0.value.1) }
@@ -338,44 +334,15 @@ struct ReportsView: View {
         receipts.filter { Calendar.current.component(.year, from: $0.date) == selectedYear }
     }
 
-    /// P2-0/C-2: tổng Báo Cáo cũng là tổng CHÍNH THỨC —
-    /// chỉ tờ đã duyệt, không loại khỏi tổng, số đã trả.
-    private func sum(_ kind: Classification, in items: [Receipt]) -> Int {
-        items.filter {
-            $0.classification == kind && $0.status == .reviewed
-                && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
-    }
-
-    /// P2-0/C-2: tiền chờ duyệt của năm đang xem.
-    private var pendingTotal: Int {
-        yearReceipts.filter {
-            $0.status == .needsReview && !$0.excludedFromTotals
-        }.reduce(0) { $0 + ($1.amountPaidCents ?? 0) }
-    }
-
-    private var categoryRows: [(key: String, name: String, kind: Classification, total: Int, count: Int)] {
-        var grouped: [String: (Classification, Int, Int)] = [:]
-        // P2-0/C-2: worksheet chỉ tính tờ chính thức.
-        for receipt in yearReceipts
-        where receipt.classification != .unknown
-            && receipt.status == .reviewed && !receipt.excludedFromTotals {
-            let key = "\(receipt.classificationRaw)|\(receipt.category.isEmpty ? "Khác" : receipt.category)"
-            let old = grouped[key] ?? (receipt.classification, 0, 0)
-            grouped[key] = (receipt.classification, old.1 + (receipt.amountPaidCents ?? 0), old.2 + 1)
-        }
-        return grouped
-            // P2-0 mục 17 (§2.2(7)): id của hàng là KHOÁ
-            // GỘP (loại|mục) — hai mục trùng tên ở hai loại
-            // không còn trùng id trong ForEach.
-            .map { (key: $0.key, name: $0.key.components(separatedBy: "|").last ?? $0.key, kind: $0.value.0, total: $0.value.1, count: $0.value.2) }
-            .sorted { a, b in
-                if a.kind != b.kind { return a.kind == .business }
-                return a.total > b.total
-            }
-    }
+    // A3 (vòng 2): phép tính của màn này nay nằm ở TaxReportMath
+    // (ExportKit.swift) — MỘT nguồn cho cả màn Báo Cáo lẫn Tax Pack
+    // xuất ra (cùng thuật toán cũ: luật tờ chính thức A7, mục gom
+    // theo "<loại>|<mục|Khác>", business trước rồi tổng giảm dần).
 
     var body: some View {
+        let yearInputs = yearReceipts.map(ExportInputBuilder.light)
+        let totals = TaxReportMath.totals(yearInputs)
+        let categoryRows = TaxReportMath.categoryRows(yearInputs)
         NavigationStack {
             List {
                 Section {
@@ -387,12 +354,36 @@ struct ReportsView: View {
                     .pickerStyle(.segmented)
                 }
 
+                // A12(iii) (vòng 2, WP9 §4.13): cảnh báo sẵn sàng của
+                // năm thuế — CHỈ CẢNH BÁO, mở Hộp Chờ có sẵn.
+                let readinessGap = TaxReportMath.readinessGapCount(yearInputs)
+                if readinessGap > 0 {
+                    Section {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Năm \(String(selectedYear)) chưa sẵn sàng",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.headline)
+                                .foregroundStyle(DS.warning)
+                            Text("Còn \(readinessGap) tờ chưa phân loại / chờ duyệt — xuất hồ sơ bây giờ sẽ thiếu các tờ này.")
+                                .font(.callout)
+                            NavigationLink {
+                                ReceiptListView(onlyNeedsReview: true)
+                            } label: {
+                                Text("Mở Hộp Chờ")
+                                    .font(.callout.weight(.semibold))
+                                    .frame(minHeight: 44)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+
                 Section("Tổng năm \(String(selectedYear))") {
                     HStack {
                         Label("CÁ NHÂN", systemImage: "person.fill")
                             .foregroundStyle(Theme.personalColor)
                         Spacer()
-                        Text(formatMoney(cents: sum(.personal, in: yearReceipts)))
+                        Text(formatMoney(cents: totals.personal))
                             .font(.body.weight(.semibold))
                             .monospacedDigit()
                     }
@@ -400,20 +391,20 @@ struct ReportsView: View {
                         Label("BUSINESS", systemImage: "briefcase.fill")
                             .foregroundStyle(Theme.businessColor)
                         Spacer()
-                        Text(formatMoney(cents: sum(.business, in: yearReceipts)))
+                        Text(formatMoney(cents: totals.business))
                             .font(.body.weight(.semibold))
                             .monospacedDigit()
                     }
-                    if sum(.unknown, in: yearReceipts) != 0 {
+                    if totals.unknown != 0 {
                         HStack {
                             Label("CHƯA RÕ", systemImage: "questionmark.circle.fill")
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Text(formatMoney(cents: sum(.unknown, in: yearReceipts)))
+                            Text(formatMoney(cents: totals.unknown))
                                 .monospacedDigit()
                         }
                     }
-                    Text("\(yearReceipts.count) hoá đơn · \(yearReceipts.filter { $0.status == .needsReview }.count) tờ đang chờ duyệt (\(formatMoney(cents: pendingTotal))) — tổng ở trên chỉ tính tờ ĐÃ duyệt, tiền chờ chưa tính vào")
+                    Text("\(totals.count) hoá đơn · \(totals.needsReviewCount) tờ đang chờ duyệt (\(formatMoney(cents: totals.pending))) — tổng ở trên chỉ tính tờ ĐÃ duyệt, tiền chờ chưa tính vào")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -422,8 +413,9 @@ struct ReportsView: View {
                     Section("Theo mục (Schedule C worksheet — bản xem trước)") {
                         ForEach(categoryRows, id: \.key) { row in
                             HStack {
-                                Image(systemName: row.kind.iconName)
-                                    .foregroundStyle(row.kind.color)
+                                let kind = Classification(rawValue: row.kindNormalized) ?? .unknown
+                                Image(systemName: kind.iconName)
+                                    .foregroundStyle(kind.color)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(row.name)
                                     Text("\(row.count) hoá đơn")
@@ -438,11 +430,9 @@ struct ReportsView: View {
                     }
                 }
 
-                Section {
-                    Text("Xuất hồ sơ thuế (Tax Pack: PDF + CSV + ZIP theo năm) sẽ có ở bản sau. Bản này mới có bảng tổng xem trước.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                // A3 (vòng 2): xuất Tax Pack + gói file gốc cho kế toán
+                // (thay dòng "sẽ có ở bản sau").
+                TaxPackExportSection(year: selectedYear, receipts: Array(receipts))
             }
             .dsListBackground()
             .navigationTitle("Báo Cáo Thuế")

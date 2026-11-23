@@ -324,6 +324,48 @@ final class Receipt {
     }
 }
 
+// MARK: - A7: truy cập luật tờ chính thức (bọc mỏng quanh OfficialReceiptRule)
+
+extension Receipt {
+    /// Tờ CHÍNH THỨC: đã duyệt và không bị loại khỏi tổng.
+    var isOfficialRecord: Bool {
+        OfficialReceiptRule.isOfficial(isReviewed: status == .reviewed,
+                                       excludedFromTotals: excludedFromTotals)
+    }
+    /// Tờ CHỜ DUYỆT tính vào dòng "đang chờ" (không loại khỏi tổng).
+    var isPendingRecord: Bool {
+        OfficialReceiptRule.isPending(isNeedsReview: status == .needsReview,
+                                      excludedFromTotals: excludedFromTotals)
+    }
+    /// Số tiền được cộng vào mọi tổng: số đã trả, thiếu thì 0.
+    var countedAmountCents: Int {
+        OfficialReceiptRule.countedCents(amountPaidCents)
+    }
+
+    /// A6: hạn lưu giữ suy từ năm thuế hiện tại (không ghi gì).
+    var computedRetentionUntil: Date? {
+        RetentionPolicy.retentionUntil(taxYear: taxYear)
+    }
+    /// A6: gán retentionUntil theo năm thuế — gọi tại điểm TẠO và
+    /// điểm có thể ĐỔI ngày/năm thuế. Không bao giờ xoá gì.
+    func applyRetentionPolicy() {
+        retentionUntil = computedRetentionUntil
+    }
+}
+
+extension Sequence where Element == Receipt {
+    /// Tổng chính thức của một loại (cent).
+    func officialTotalCents(kind: Classification) -> Int {
+        filter { $0.classification == kind && $0.isOfficialRecord }
+            .reduce(0) { $0 + $1.countedAmountCents }
+    }
+    /// Tổng đang chờ duyệt, mọi loại (cent).
+    func pendingTotalCents() -> Int {
+        filter { $0.isPendingRecord }
+            .reduce(0) { $0 + $1.countedAmountCents }
+    }
+}
+
 @Model
 final class LineItem {
     var name: String = ""

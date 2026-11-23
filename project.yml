@@ -55,6 +55,14 @@ targets:
       # gương. Chỉ target chính như MirrorSync — bench không
       # có tầng model/UI nên không liên kết file này.
       - DriveSync.swift
+      # A1 (vòng 2): đường kéo về từ Drive — planner thuần (harness
+      # cũng biên dịch) + engine/màn hình (chỉ target app).
+      - RestorePlanner.swift
+      - DriveRestore.swift
+      # A2 + A3 (vòng 2): lõi xuất thuần (ZIP/CSV/phép tính Báo
+      # Cáo — harness cũng biên dịch) + màn xuất/PDF (chỉ app).
+      - ExportKit.swift
+      - ExportViews.swift
       # L-2026-11-20-42: bảo vệ ảnh gốc — kho an toàn ở
       # Application Support/OriginalVault + kiểm kê mỗi lần
       # mở app (planner thuần vào harness như ReceiptLogic;
@@ -62,6 +70,8 @@ targets:
       # target chính như DriveSync — bench không liên kết.
       - ImageIntegrity.swift
       - CardsView.swift
+      # A12(i) (vòng 2): onboarding 3 bước (chỉ target app).
+      - Onboarding.swift
       - DesignSystem.swift
       # --- Tập module đường đọc v3 (Pha 0-3, dùng CHUNG với
       # target SoHoaDonBench ở dưới — luật 1.6: một nguồn duy
@@ -87,6 +97,9 @@ targets:
       - TaxSeed.swift
       - TaxSettings.swift
       - StoreProfiles.swift
+      # A10 (vòng 2): nét tiệm vượt v1 — lõi thuần (harness cũng
+      # biên dịch); chỉ GỢI Ý, JSON trong Application Support.
+      - StoreTraits.swift
       # --- Dữ liệu bundle của M7 (tiệm) + DomainCorrection ---
       - vendors.json
       - lexicon.json
