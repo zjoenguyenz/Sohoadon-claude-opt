@@ -201,6 +201,8 @@ struct TabShellView: View {
     /// đã sửa ở ContentView).
     @SceneStorage("glkeeper.selectedTab") private var selectedTab = 0
     @State private var seeded = false
+    /// A12(i) (vòng 2): onboarding 3 bước — chỉ sổ trống, một lần.
+    @State private var showOnboarding = false
     /// P2-1: theo dõi foreground để kích lượt gương bắt kịp
     /// khi anh quay lại app (thư mục/mạng khả dụng trở lại).
     @Environment(\.scenePhase) private var scenePhase
@@ -228,8 +230,24 @@ struct TabShellView: View {
                 .tag(4)
         }
         .tint(DS.brand)
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingView(onScanNow: {
+                showOnboarding = false
+                selectedTab = 2
+            }, onFinish: {
+                showOnboarding = false
+            })
+        }
         .task {
             seedStarterCardIfNeeded()
+            // A12(i): sổ TRỐNG + chưa onboarding + không có file chờ
+            // nạp -> mở onboarding. Đọc sổ lỗi thì không mở (không
+            // đoán là sổ trống).
+            if !OnboardingState.didOnboard, pendingImportURLs.isEmpty,
+               let count = try? modelContext.fetchCount(FetchDescriptor<Receipt>()),
+               count == 0 {
+                showOnboarding = true
+            }
             // L-2026-11-20-42: kiểm kê ảnh gốc chạy TRƯỚC
             // các trigger đồng bộ lúc mở app — kho chính mất
             // file mà kho an toàn còn thì khôi phục/bổ sung

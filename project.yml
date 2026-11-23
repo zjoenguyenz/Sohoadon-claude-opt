@@ -70,6 +70,8 @@ targets:
       # target chính như DriveSync — bench không liên kết.
       - ImageIntegrity.swift
       - CardsView.swift
+      # A12(i) (vòng 2): onboarding 3 bước (chỉ target app).
+      - Onboarding.swift
       - DesignSystem.swift
       # --- Tập module đường đọc v3 (Pha 0-3, dùng CHUNG với
       # target SoHoaDonBench ở dưới — luật 1.6: một nguồn duy
